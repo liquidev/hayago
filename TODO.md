@@ -23,6 +23,7 @@ Those are the features still to be implemented.
      - [ ] Maps
        - [ ] Comprehensions (?)
      - [ ] Closures (lambdas)
+       - [ ] Static typing (?)
  - [ ] Statements
    - [x] Delimiters
    - [x] Expression statements
@@ -45,3 +46,24 @@ Those are the features still to be implemented.
      - [ ] Trait
        - [ ] `trait`
        - [ ] `impl...for`
+
+## Standard library
+
+The stdlib of rod is going to be lightweight, so only the very basic functions are going to be featured.
+Please do not open issues/pull requests suggesting high-level features like advanced math functions, or GUIs.
+
+ - [ ] Primitives
+   - `num`
+   - `str`
+   - `fn<T>(...args)`
+ - [ ] Data structures
+   - [ ] class `Vec<T>`
+   - [ ] class `Map<T>`
+ - [ ] module `concurrency`
+   - [ ] class `Fiber`
+ - [ ] module `reflect`
+   - [ ] class `Module`
+   - [ ] class `Class`
+   - [ ] class `Method`
+   - [ ] class `Field`
+   - [ ] class `Pragma`
