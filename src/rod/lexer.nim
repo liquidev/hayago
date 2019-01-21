@@ -50,27 +50,28 @@ type
     rtNull, rtTrue, rtFalse # null true false
     rtNum, rtStr
     # flow control
-    rtIf, rtFor, rtWhile, rtLoop  # if for while loop
-    rtReturn, rtContinue, rtBreak # return continue break
+    rtIf, rtElse, rtFor, rtWhile, rtLoop  # if else for while loop
+    rtReturn, rtContinue, rtBreak         # return continue break
+    rtIn                                  # in
     # declarations
-    rtLet, rtFn, rtClass, rtEnum, rtMixin # let fn class enum mixin
-    rtSelf                                # self
-    rtPub, rtUse                          # pub use
+    rtLet, rtFn, rtClass, rtEnum, rtTrait # let fn class enum trait
+    rtImpl, rtIs, rtSelf                  # impl is self
+    rtPub, rtMut, rtUse                   # pub mut use
     # identifiers
     rtIdent
 
   Token* = object
-    text: string
-    case kind: TokenKind
+    text*: string
+    index*, ln*, col*: int
+    case kind*: TokenKind
     of rtNum:
-      numVal: float64
+      numVal*: float64
     of rtStr:
-      strVal: string
+      strVal*: string
     of rtIdent:
-      ident: string
+      ident*: string
     of rtInvalid:
-      character: char
-      index: int
+      character*: char
     else:
       discard
   LexerError* = object of Exception
@@ -80,6 +81,19 @@ type
 
 const
   KeywordChars = {'a'..'z'}
+  RodOps* = {
+    rtPlus, rtMinus, rtStar, rtSlash, rtPercent,
+    rtPipe, rtAmp, rtDLess, rtTLess, rtDMore
+  }
+
+proc getLn(str: string, idx: int): int =
+  for c in str[0..idx]:
+    if c == '\n': result += 1
+
+proc getCol(str: string, idx: int): int =
+  for c in str[0..idx]:
+    result += 1
+    if c in NewLines: result = 0
 
 proc `$`*(token: Token): string =
   case token.kind
@@ -184,20 +198,25 @@ rule tStr:
     result = Token(kind: rtStr, strVal: str)
 # flow control
 keyword(kIf, rtIf, "if")
+keyword(kElse, rtElse, "else")
 keyword(kFor, rtFor, "for")
 keyword(kWhile, rtWhile, "while")
 keyword(kLoop, rtLoop, "loop")
 keyword(kReturn, rtReturn, "return")
 keyword(kContinue, rtContinue, "continue")
 keyword(kBreak, rtBreak, "break")
+keyword(kIn, rtIn, "in")
 # declarations
 keyword(kLet, rtLet, "let")
 keyword(kFn, rtFn, "fn")
 keyword(kClass, rtClass, "class")
 keyword(kEnum, rtEnum, "enum")
-keyword(kMixin, rtMixin, "mixin")
+keyword(kIs, rtIs, "is")
+keyword(kTrait, rtTrait, "trait")
+keyword(kImpl, rtImpl, "impl")
 keyword(kSelf, rtSelf, "self")
 keyword(kPub, rtPub, "pub")
+keyword(kMut, rtMut, "mut")
 keyword(kUse, rtUse, "use")
 # identifiers
 rule ident:
@@ -232,7 +251,13 @@ rule invalid:
 
 template exec(token: untyped) {.dirty.} =
   block token:
-    let ruleResult = token(istr)
+    let
+      ln = getLn(istr.input, istr.pos)
+      col = getCol(istr.input, istr.pos)
+    var ruleResult = token(istr)
+    ruleResult.index = istr.pos
+    ruleResult.ln = ln
+    ruleResult.col = col
     if ruleResult.kind != rtUnknown:
       result.add(ruleResult)
       break rules # don't try this at work
@@ -275,14 +300,16 @@ template execAll() {.dirty.} =
     exec tNum
     exec tStr
     # flow control
-    exec kIf
+    exec kIf; exec kElse
     exec kFor; exec kWhile; exec kLoop
     exec kReturn; exec kContinue; exec kBreak
+    exec kIn
     # declarations
     exec kLet; exec kFn
-    exec kClass; exec kEnum; exec kMixin
+    exec kClass; exec kEnum; exec kIs
+    exec kTrait; exec kImpl
     exec kSelf
-    exec kPub; exec kUse
+    exec kPub; exec kMut; exec kUse
     # identifiers
     exec ident
     # any invalid characters

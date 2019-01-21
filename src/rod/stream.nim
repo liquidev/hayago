@@ -11,10 +11,10 @@ type
 proc finished*(str: Stream): bool =
   str.pos == str.input.len
 
-proc peek*[T](str: Stream[T], amt: int = 1, offset: int = 0): T =
+proc peek*[T](str: Stream[T], amt: int = 1, offset: int = 0): seq[T] =
   if str.pos + amt + offset - 1 < str.input.len:
     result = str.input[str.pos + offset..<str.pos + amt + offset]
 
-proc consume*[T](str: var Stream[T], amt: int = 1): T =
+proc consume*[T](str: var Stream[T], amt: int = 1): seq[T] =
   result = str.peek(amt)
   str.pos += amt
