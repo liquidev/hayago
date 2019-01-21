@@ -8,17 +8,21 @@ Those are the features still to be implemented.
    - [x] Operators
      - [x] Prefix
      - [x] Infix
+     - [ ] Postfix
+       - [ ] Index
      - [x] Assignment
        - [x] Single
        - [x] Tuple
    - [x] Calls
    - [x] `if`
    - [x] Variables and namespaces
-   - [ ] Data structures
+   - [ ] Types
+     - [x] Primitives
      - [ ] Vectors
        - [ ] Comprehensions
      - [ ] Maps
        - [ ] Comprehensions (?)
+     - [ ] Closures (lambdas)
  - [ ] Statements
    - [x] Delimiters
    - [x] Expression statements
@@ -37,3 +41,7 @@ Those are the features still to be implemented.
        - [ ] Methods
          - [ ] Static
          - [ ] Instance
+       - [ ] Operator overloading
+     - [ ] Trait
+       - [ ] `trait`
+       - [ ] `impl...for`
