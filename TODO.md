@@ -12,8 +12,8 @@ Those are the features still to be implemented.
    - [x] Operators
      - [x] Prefix
      - [x] Infix
-     - [ ] Postfix
-       - [ ] Index
+     - [x] Postfix
+       - [x] Index
      - [x] Assignment
        - [x] Single
        - [x] Tuple
