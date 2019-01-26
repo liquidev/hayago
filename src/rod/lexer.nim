@@ -44,6 +44,7 @@ type
     rtDot, rtComma               # . ,
     rtDDot, rtTDot               # .. ...
     rtColon, rtDColon, rtStmtEnd # : :: ;
+    rtLArrow, rtRArrow           # <- ->
     # assignment
     rtAssign # =
     # types
@@ -164,6 +165,8 @@ litRule(comma, rtComma, ",")
 litRule(colon, rtColon, ":")
 litRule(dColon, rtDColon, "::")
 litRule(stmtEnd, rtStmtEnd, ";")
+litRule(lArrow, rtLArrow, "<-")
+litRule(rArrow, rtRArrow, "->")
 # assignment
 litRule(assign, rtAssign, "=")
 # types
@@ -268,6 +271,8 @@ template execAll() {.dirty.} =
     # whitespace/ignored
     exec wsp; exec comment
     exec eof
+    # arrows
+    exec lArrow; exec rArrow
     # math
     exec plus; exec minus
     exec star; exec slash
