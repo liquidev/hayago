@@ -25,10 +25,9 @@ Rod::say_hello("world");
    and a separate symbol table must be used.
  - **Easy API.** rod is easily embeddable into other applications. Its FFI
    can automatically generate the necessary wrapper procedures for just about
-   any object.
- - **Concurrency.** rod's concurrency is very lightweight. There aren't any
-   threads, but that is a design choice with intentions of making the language
-   much more simple.
+   any object or procedure.
+ - **Concurrency.** rod's concurrency is very lightweight. It uses fibers to
+   achieve simple, yet powerful parallelization.
 
 ### Running rod
 To run rod, compile it from source code:

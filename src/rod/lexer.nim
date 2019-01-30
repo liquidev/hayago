@@ -3,6 +3,9 @@
 # copyright (C) iLiquid, 2019
 #~~
 
+## The lexer is fairly basic – it takes a string, and outputs a sequence of
+## ``Token``s.
+
 import strutils, strscans
 import sequtils
 
@@ -66,7 +69,7 @@ type
     index*, ln*, col*: int
     case kind*: TokenKind
     of rtNum:
-      numVal*: float64
+      numVal*: float
     of rtStr:
       strVal*: string
     of rtIdent:
