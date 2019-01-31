@@ -3,23 +3,10 @@
 # copyright (C) iLiquid, 2018
 #~~
 
+import sequtils
 import tables
 
 type
-  RodBaseVM* = ref object of RootObj
-    ## A base rod VM. This is used heavily throughout rod, and allows \
-    ## for extra modularity.
-    ## Side note: Totally didn't make this because Nim doesn't support cyclic \
-    ## imports yet.
-    foreignFns*: seq[RodForeignFn]
-    foreignFnSignatures*: TableRef[string, int]
-  RodCompatVM* = concept vm, var vvm
-    vm is RodBaseVM; vvm is RodBaseVM
-    vm.registerForeignFn(string, RodForeignFn)
-  RodForeignFn* = proc (vm: var RodCompatVM)
-    ## A foreign function, used for low-level binding.
-    ## If you want something simpler, see the ``autorod`` module.
-
   RodValueKind* = enum
     rvNull ## a null value
     rvBool ## true or false
@@ -33,6 +20,21 @@ type
     of rvBool: boolVal*: bool
     of rvNum:  numVal*: float
     of rvStr:  strVal*: string
+
+proc typeName*(val: RodValue): string =
+  case val.kind
+  of rvNull: "null"
+  of rvBool: "bool"
+  of rvNum: "num"
+  of rvStr: "str"
+
+proc `$`*(value: RodValue): string =
+  result.add(value.typeName)
+  case value.kind
+  of rvBool: result.add(' ' & $value.boolVal)
+  of rvNum: result.add(' ' & $value.numVal)
+  of rvStr: result.add(' ' & '"' & value.strVal & '"')
+  else: discard
 
 proc nullVal*(): RodValue =
   ## Creates a rod null value.
@@ -49,3 +51,17 @@ proc numVal*(val: float): RodValue =
 proc strVal*(val: string): RodValue =
   ## Creates a rod string value.
   RodValue(kind: rvStr, strVal: val)
+
+proc signature*(class: string, mtd: string, args: openArray[string]): string =
+  result.add(class)
+  result.add("::")
+  result.add(mtd)
+  result.add("(")
+  for i, a in args:
+    result.add(a)
+    if i < len(args) - 1: result.add(",")
+  result.add(")")
+
+proc signature*(class: string, mtd: string,
+                args: int, argT: string = "_"): string =
+  signature(class, mtd, newSeqWith(args, argT))

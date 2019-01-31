@@ -1,14 +1,21 @@
 import unittest
 
-import rod/[lexer, compiler, vm]
+import rod/[value, lexer, compiler, vm, std]
 
-template debugCompile(rule: string, source: string): untyped =
+template debugCompile(rule: untyped, source: string): untyped =
+  echo "--- vm ---"
   var vm = newRodVM()
-  var cp = vm.newCompiler()
-  cp.compile(tokenize(source), rule)
+  vm.registerStdlib()
+  echo vm
+
+  var cp = vm.newCompiler(tokenize(source))
+  var chunk = newChunk()
+  discard cp.rule(chunk)
+  echo "--- chunk ---"
+  chunk
 
 suite "bytecode compilation":
   test "constants":
-    echo $debugCompile("constant", "1")
+    echo $debugCompile(constant, "1")
   test "prefix ops":
-    echo $debugCompile("prefix-op", "!true")
+    echo $debugCompile(prefixOp, "-~1")
