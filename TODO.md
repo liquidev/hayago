@@ -2,59 +2,56 @@
 
 Those are the features still to be implemented.
 
-## Parser
-
-### Source code
- - [ ] Use a `pegs`-like DSL for AST generation
+## Compiler
 
 ### Features
  - [ ] Expressions
-   - [x] Operators
+   - [ ] Operators
      - [x] Prefix
-     - [x] Infix
-     - [x] Postfix
-       - [x] Index
-     - [x] Assignment
-       - [x] Single
-       - [x] Tuple
-   - [x] Calls
-   - [x] `if`
+     - [ ] Infix
+     - [ ] Postfix
+       - [ ] Index
+     - [ ] Assignment
+       - [ ] Single
+       - [ ] Tuple
+   - [ ] Calls
+   - [ ] `if`
    - [ ] `do {}`
-   - [x] Variables and namespaces
+   - [ ] Variables and namespaces
    - [ ] Types
-     - [x] Syntax
-     - [x] Primitives
+     - [ ] Syntax
+     - [ ] Primitives
      - [ ] Vectors
-       - [x] Syntax
+       - [ ] Syntax
        - [ ] Comprehensions
      - [ ] Maps
-       - [x] Syntax
+       - [ ] Syntax
        - [ ] Comprehensions (?)
-     - [x] Classes
-       - [x] Syntax
-       - [x] Shorthand
-     - [x] Closures (lambdas)
-       - [x] Syntax
-       - [x] Static typing (?)
+     - [ ] Classes
+       - [ ] Syntax
+       - [ ] Shorthand
+     - [ ] Closures (lambdas)
+       - [ ] Syntax
+       - [ ] Static typing (?)
  - [ ] Statements
-   - [x] Delimiters
-   - [x] Expression statements
-   - [x] Loops
-     - [x] `loop` (sugar for `while true`)
-     - [x] `while`
-     - [x] `for`
+   - [ ] Delimiters
+   - [ ] Expression statements
+   - [ ] Loops
+     - [ ] `loop` (sugar for `while true`)
+     - [ ] `while`
+     - [ ] `for`
    - [ ] Declarations
-     - [x] Variable
-       - [x] Static typing
-     - [x] Function
+     - [ ] Variable
+       - [ ] Static typing
+     - [ ] Function
        - [ ] Variadics
-       - [x] Static typing
-     - [x] Class
-       - [x] Fields
-       - [x] Methods
-         - [x] Static
-         - [x] Instance
-       - [x] Operator overloading
+       - [ ] Static typing
+     - [ ] Class
+       - [ ] Fields
+       - [ ] Methods
+         - [ ] Static
+         - [ ] Instance
+       - [ ] Operator overloading
      - [ ] Trait
        - [ ] `trait`
        - [ ] `impl…for`

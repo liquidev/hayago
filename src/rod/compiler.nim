@@ -34,6 +34,7 @@ type
 
 type
   RodChunk* = ref object
+    module*: RodModule
     bytecode*: seq[uint8]
     lines*: seq[tuple[len: int, num: int]]
     consts*: seq[RodValue]
@@ -42,15 +43,15 @@ type
 proc `[]`(chunk: RodChunk, idx: int): uint8 =
   chunk.bytecode[idx]
 
-proc newChunk*(): RodChunk =
+proc newModule*(): RodModule =
+  RodModule()
+
+proc newChunk*(module: RodModule): RodChunk =
   RodChunk(
     bytecode: @[],
     lines: @[],
     consts: @[]
   )
-
-proc newModule*(): RodModule =
-  RodModule()
 
 proc constId(chunk: var RodChunk, val: RodValue): int16 =
   for i, c in chunk.consts:
@@ -158,39 +159,45 @@ proc error(cp: var RodCompiler, message: string) =
 #~~
 
 type
-  RuleFn* = proc (cp: var RodCompiler, chunk: var RodChunk): bool
+  RuleFn* = proc (cp: var RodCompiler, chunk: var RodChunk): string
 
-proc constant*(cp: var RodCompiler, chunk: var RodChunk): RodValue =
+template rule(name, body: untyped) =
+  proc name*(cp: var RodCompiler, chunk: var RodChunk): string =
+    body
+
+proc constant*(cp: var RodCompiler, chunk: var RodChunk): string =
   case cp.peek().kind
   of rtNull:
     chunk.write(ropPushNull)
-    result = nullVal()
+    result = "null"
   of rtTrue:
     chunk.write(ropPushTrue)
-    result = boolVal(true)
+    result = "bool"
   of rtFalse:
     chunk.write(ropPushFalse)
-    result = boolVal(true)
+    result = "bool"
   of rtNum:
-    result = numVal(cp.peek().numVal)
+    let val = numVal(cp.peek().numVal)
     chunk.write(ropPushConst)
-    chunk.write(chunk.constId(result))
+    chunk.write(chunk.constId(val))
+    result = val.typeName()
   of rtStr:
-    result = strVal(cp.peek().strVal)
+    let val = strVal(cp.peek().strVal)
     chunk.write(ropPushConst)
-    chunk.write(chunk.constId(result))
+    chunk.write(chunk.constId(val))
+    result = val.typeName()
   else: return
   cp.next()
 
-proc atom*(cp: var RodCompiler, chunk: var RodChunk): RodValue =
+proc atom*(cp: var RodCompiler, chunk: var RodChunk): string =
   result = cp.constant(chunk)
 
-proc prefixOp*(cp: var RodCompiler, chunk: var RodChunk): RodValue =
+proc prefixOp*(cp: var RodCompiler, chunk: var RodChunk): string =
   if cp.peek().kind in { rtPlus, rtMinus, rtExcl, rtTilde }:
     let
       op = cp.consume()
       right = cp.prefixOp(chunk)
-      sign = signature(right.typeName(), op.text, 1)
+      sign = signature(right, op.text, 1)
     if cp.vm.foreignFnSignatures.hasKey(sign):
       let id = cp.vm.foreignFnSignatures[sign]
       chunk.write(ropCallForeign)
@@ -198,21 +205,62 @@ proc prefixOp*(cp: var RodCompiler, chunk: var RodChunk): RodValue =
       return right
     else:
       cp.error(
-        "Type " & right.typeName() & " doesn't implement the " & op.text &
+        "Type " & right & " doesn't implement the " & op.text &
         " operator")
   else:
     return cp.atom(chunk)
 
+const
+  InfixOpPrecedence: array[1..10, set[TokenKind]] = [
+    #[ 1 ]# {}, #
+    #[ 2 ]# {}, # unused
+    #[ 3 ]# {}, #
+    #[ 4 ]# { rtDPipe },
+    #[ 5 ]# { rtDAmp },
+    #[ 6 ]# { rtEq, rtNotEq, rtLess, rtLessEq, rtMore, rtMoreEq,
+              rtIs, rtIn },
+    #[ 7 ]# { rtDDot, rtTDot },
+    #[ 8 ]# { rtAmp },
+    #[ 9 ]# { rtPlus, rtMinus },
+    #[ 10 ]# { rtStar, rtSlash, rtPercent }
+  ]
 
+template infixOp(lo: untyped, hi: untyped, level: int): untyped {.dirty.} =
+  proc lo*(cp: var RodCompiler, chunk: var RodChunk): string =
+    let left = cp.hi(chunk)
+    if cp.peek().kind in InfixOpPrecedence[level]:
+      while cp.peek().kind in InfixOpPrecedence[level]:
+        let
+          op = cp.consume()
+          right = cp.hi(chunk)
+          sign = signature(left, op.text, 2)
+        if cp.vm.foreignFnSignatures.hasKey(sign):
+          let id = cp.vm.foreignFnSignatures[sign]
+          chunk.write(ropCallForeign)
+          chunk.write(id)
+        else:
+          cp.error(
+            "Type " & left & " doesn't implement the " & op.text &
+            " operator")
+    return left
+
+infixOp(infixOp10, prefixOp, 10)
+infixOp(infixOp9, infixOp10, 9)
+infixOp(infixOp8, infixOp9, 8)
+infixOp(infixOp7, infixOp8, 7)
+infixOp(infixOp6, infixOp7, 6)
+infixOp(infixOp5, infixOp6, 5)
+infixOp(infixOp4, infixOp5, 4)
 
 #~~
 # utility procs
 #~~
 
 proc compile*(cp: var RodCompiler,
+              module: var RodModule,
               tokens: seq[Token],
               rule: RuleFn): RodChunk =
-  result = newChunk()
+  result = module.newChunk()
   cp.tokens = tokens
   discard rule(cp, result)
 

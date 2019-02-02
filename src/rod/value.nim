@@ -53,8 +53,9 @@ proc strVal*(val: string): RodValue =
   RodValue(kind: rvStr, strVal: val)
 
 proc signature*(class: string, mtd: string, args: openArray[string]): string =
-  result.add(class)
-  result.add("::")
+  if class != "":
+    result.add(class)
+    result.add("::")
   result.add(mtd)
   result.add("(")
   for i, a in args:

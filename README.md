@@ -6,8 +6,8 @@ with a modern, Rust-like syntax.
 ```rust
 // main.rod
 class Rod {
-  pub fn say_hello(person) {
-    println("Hello, {}!", person);
+  pub fn say_hello(target: str) {
+    println("Hello, {}!", [target]);
   }
 }
 
@@ -15,8 +15,8 @@ Rod::say_hello("world");
 ```
 
 ### Features
- - **A fast VM.** rod uses bytecode instead of direct execution from AST, which
-   makes it very fast.
+ - **A fast VM.** rod uses a small, yet modular instruction set for its VM,
+   making code execution very fast.
  - **Easy-to-understand syntax.** The language's syntax is similar to Rust,
    but without a lot of the hard stuff – there's no lifetimes,
    it's dynamically typed, and it has classes.
@@ -24,10 +24,11 @@ Rod::say_hello("world");
    binary format for source code protection. Debugging symbols are stripped,
    and a separate symbol table must be used.
  - **Easy API.** rod is easily embeddable into other applications. Its FFI
-   can automatically generate the necessary wrapper procedures for just about
-   any object or procedure.
+   can automatically generate the necessary wrappers for just about any object,
+   enum, or procedure.
  - **Concurrency.** rod's concurrency is very lightweight. It uses fibers to
-   achieve simple, yet powerful parallelization.
+   achieve simple, yet powerful parallelization, without giving up
+   thread-safety.
 
 ### Running rod
 To run rod, compile it from source code:
@@ -44,6 +45,13 @@ println("Hello, World!");
 ```sh
 $ rod hello.rod
 Hello, World!
+```
+rod can also be run in REPL mode:
+```rust
+$ rod
+r~ > println("Hello, World!");
+Hello, World!
+   < null
 ```
 For more details, check the language guide.
 
