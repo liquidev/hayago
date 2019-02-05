@@ -28,6 +28,7 @@ type
       ## slots are the function's parameters.
       ## Note that slots are used internally too, for passing parameters \
       ## between native functions.
+  RodContext* = object
   RodForeignFn* = proc (vm: var RodVM)
 
 proc `$`*(vm: RodVM): string =

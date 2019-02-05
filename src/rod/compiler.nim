@@ -3,14 +3,14 @@
 # copyright (C) iLiquid, 2019
 #~~
 
-## Rod uses a direct compiler. That means all tokens are turned directly into
-## bytecode using recursive descent parsing – except we don't produce
-## an AST, to reduce memory usage.
-
 from strutils import `toHex`
+
+import deques
 import tables
 
 import lexer
+import parser
+import util
 import value
 import vm
 
@@ -21,12 +21,11 @@ import vm
 type
   RodOpcode* = enum
     ## A rod opcode, used in bytecode.
-    ropReturn
     # stack operations
-    ropPushNull, ropPushTrue, ropPushFalse
     ropPushConst
     # calls
     ropCallForeign
+    ropReturn
 
 #~~
 # chunk
@@ -35,9 +34,12 @@ type
 type
   RodChunk* = ref object
     module*: RodModule
+
     bytecode*: seq[uint8]
     lines*: seq[tuple[len: int, num: int]]
+
     consts*: seq[RodValue]
+    symbols*: seq[string]
   RodModule* = ref object
 
 proc `[]`(chunk: RodChunk, idx: int): uint8 =
@@ -48,6 +50,7 @@ proc newModule*(): RodModule =
 
 proc newChunk*(module: RodModule): RodChunk =
   RodChunk(
+    module: module,
     bytecode: @[],
     lines: @[],
     consts: @[]
@@ -117,153 +120,80 @@ proc `$`*(chunk: RodChunk): string =
 type
   RodCompiler* = ref object
     vm: RodVM
-    tokens: seq[Token]
-    pos: int
   RodCompileError* = object of Exception
 
-proc newCompiler*(vm: RodVM, tokens: seq[Token]): RodCompiler =
-  RodCompiler(
-    vm: vm,
-    tokens: tokens,
-    pos: 0
+proc newCompiler*(vm: RodVM): RodCompiler =
+  result = RodCompiler(
+    vm: vm
   )
 
-proc peek(cp: RodCompiler): Token =
-  cp.tokens[cp.pos]
-
-proc next(cp: var RodCompiler) =
-  cp.pos += 1
-
-proc consume(cp: var RodCompiler): Token =
-  result = cp.peek()
-  cp.next()
-
-proc match(cp: var RodCompiler, kind: TokenKind, tok: var Token): bool =
-  if cp.peek().kind == kind:
-    tok = cp.consume()
-    result = true
-
-proc match(cp: var RodCompiler, kind: TokenKind): bool =
-  var tok: Token
-  cp.match(kind, tok)
-
 proc error(cp: var RodCompiler, message: string) =
-  let
-    ln = cp.peek().ln
-    col = cp.peek().col
-    message = "line " & $ln & " col " & $col & ": " & message
-  raise newException(RodCompileError, message)
+  # let
+  #   ln = cp.peek().ln
+  #   col = cp.peek().col
+  #   message = "line " & $ln & " col " & $col & ": " & message
+  # raise newException(RodCompileError, message)
+  discard
 
 #~~
-# recursive descent parser
+# compilation
 #~~
 
 type
-  RuleFn* = proc (cp: var RodCompiler, chunk: var RodChunk): string
+  RuleFn = proc (cp: var RodCompiler,
+                 node: RodNode, chunk: var RodChunk): string
 
-template rule(name, body: untyped) =
-  proc name*(cp: var RodCompiler, chunk: var RodChunk): string =
+var rules = newTable[set[RodNodeKind], RuleFn]()
+
+proc compile(cp: var RodCompiler,
+             chunk: var RodChunk, node: RodNode): string {.discardable.} =
+  for k, r in rules:
+    if node.kind in k:
+      return r(cp, node, chunk)
+  warn("compiling " & $node.kind & " is not implemented yet")
+
+proc compile*(cp: var RodCompiler, module: RodModule,
+              node: RodNode): RodChunk =
+  result = module.newChunk()
+  discard cp.compile(result, node)
+
+template rule(nodeKind: set[RodNodeKind], body: untyped): untyped {.dirty.} =
+  rules.add(nodeKind) do (cp: var RodCompiler,
+                          node: RodNode, chunk: var RodChunk) -> string:
     body
 
-proc constant*(cp: var RodCompiler, chunk: var RodChunk): string =
-  case cp.peek().kind
-  of rtNull:
-    chunk.write(ropPushNull)
-    result = "null"
-  of rtTrue:
-    chunk.write(ropPushTrue)
-    result = "bool"
-  of rtFalse:
-    chunk.write(ropPushFalse)
-    result = "bool"
-  of rtNum:
-    let val = numVal(cp.peek().numVal)
-    chunk.write(ropPushConst)
-    chunk.write(chunk.constId(val))
-    result = val.typeName()
-  of rtStr:
-    let val = strVal(cp.peek().strVal)
-    chunk.write(ropPushConst)
-    chunk.write(chunk.constId(val))
-    result = val.typeName()
-  else: return
-  cp.next()
+proc writeCall(cp: RodCompiler, chunk: var RodChunk, sig: string) =
+  if cp.vm.foreignFnSignatures.hasKey(sig):
+    chunk.write(ropCallForeign)
+    chunk.write(cp.vm.foreignFnSignatures[sig])
 
-proc atom*(cp: var RodCompiler, chunk: var RodChunk): string =
-  result = cp.constant(chunk)
+rule {rnNull, rnBool, rnNum, rnStr}:
+  chunk.write(ropPushConst)
+  let val = case node.kind
+    of rnNull: nullVal()
+    of rnBool: boolVal(node.boolVal)
+    of rnNum: numVal(node.numVal)
+    of rnStr: strVal(node.strVal)
+    else: nullVal()
+  chunk.write(chunk.constId(val))
+  result = val.typeName()
 
-proc prefixOp*(cp: var RodCompiler, chunk: var RodChunk): string =
-  if cp.peek().kind in { rtPlus, rtMinus, rtExcl, rtTilde }:
-    let
-      op = cp.consume()
-      right = cp.prefixOp(chunk)
-      sign = signature(right, op.text, 1)
-    if cp.vm.foreignFnSignatures.hasKey(sign):
-      let id = cp.vm.foreignFnSignatures[sign]
-      chunk.write(ropCallForeign)
-      chunk.write(id)
-      return right
+rule {rnPrefix}:
+  result = cp.compile(chunk, node.children[1])
+  let
+    op = node.children[0].op
+    sig = signature(result, op.text, 1)
+  cp.writeCall(chunk, sig)
+
+rule {rnInfix}:
+  for n in node.children:
+    if n.kind == rnOperator:
+      let
+        op = n.op
+        sig = signature(result, op.text, 2)
+      cp.writeCall(chunk, sig)
     else:
-      cp.error(
-        "Type " & right & " doesn't implement the " & op.text &
-        " operator")
-  else:
-    return cp.atom(chunk)
-
-const
-  InfixOpPrecedence: array[1..10, set[TokenKind]] = [
-    #[ 1 ]# {}, #
-    #[ 2 ]# {}, # unused
-    #[ 3 ]# {}, #
-    #[ 4 ]# { rtDPipe },
-    #[ 5 ]# { rtDAmp },
-    #[ 6 ]# { rtEq, rtNotEq, rtLess, rtLessEq, rtMore, rtMoreEq,
-              rtIs, rtIn },
-    #[ 7 ]# { rtDDot, rtTDot },
-    #[ 8 ]# { rtAmp },
-    #[ 9 ]# { rtPlus, rtMinus },
-    #[ 10 ]# { rtStar, rtSlash, rtPercent }
-  ]
-
-template infixOp(lo: untyped, hi: untyped, level: int): untyped {.dirty.} =
-  proc lo*(cp: var RodCompiler, chunk: var RodChunk): string =
-    let left = cp.hi(chunk)
-    if cp.peek().kind in InfixOpPrecedence[level]:
-      while cp.peek().kind in InfixOpPrecedence[level]:
-        let
-          op = cp.consume()
-          right = cp.hi(chunk)
-          sign = signature(left, op.text, 2)
-        if cp.vm.foreignFnSignatures.hasKey(sign):
-          let id = cp.vm.foreignFnSignatures[sign]
-          chunk.write(ropCallForeign)
-          chunk.write(id)
-        else:
-          cp.error(
-            "Type " & left & " doesn't implement the " & op.text &
-            " operator")
-    return left
-
-infixOp(infixOp10, prefixOp, 10)
-infixOp(infixOp9, infixOp10, 9)
-infixOp(infixOp8, infixOp9, 8)
-infixOp(infixOp7, infixOp8, 7)
-infixOp(infixOp6, infixOp7, 6)
-infixOp(infixOp5, infixOp6, 5)
-infixOp(infixOp4, infixOp5, 4)
-
-#~~
-# utility procs
-#~~
-
-proc compile*(cp: var RodCompiler,
-              module: var RodModule,
-              tokens: seq[Token],
-              rule: RuleFn): RodChunk =
-  result = module.newChunk()
-  cp.tokens = tokens
-  discard rule(cp, result)
-
-proc compile*(cp: var RodCompiler, tokens: seq[Token]): RodChunk =
-  # result = cp.compile(tokens, script)
-  discard
+      if result == "":
+        result = cp.compile(chunk, n)
+      else:
+        cp.compile(chunk, n)

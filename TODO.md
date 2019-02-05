@@ -2,76 +2,45 @@
 
 Those are the features still to be implemented.
 
-## Compiler
+## Lexer
+
+ - [ ] Strings
+   - [ ] String literal kinds
+     - [ ] Single-line
+     - [ ] Multi-line
+     - [ ] Raw (`r` prefix)
+
+## Parser
 
 ### Features
+
  - [ ] Expressions
-   - [ ] Operators
-     - [x] Prefix
-     - [ ] Infix
-     - [ ] Postfix
-       - [ ] Index
-     - [ ] Assignment
-       - [ ] Single
-       - [ ] Tuple
-   - [ ] Calls
-   - [ ] `if`
-   - [ ] `do {}`
-   - [ ] Variables and namespaces
-   - [ ] Types
-     - [ ] Syntax
-     - [ ] Primitives
-     - [ ] Vectors
-       - [ ] Syntax
-       - [ ] Comprehensions
-     - [ ] Maps
-       - [ ] Syntax
-       - [ ] Comprehensions (?)
-     - [ ] Classes
-       - [ ] Syntax
-       - [ ] Shorthand
-     - [ ] Closures (lambdas)
-       - [ ] Syntax
-       - [ ] Static typing (?)
- - [ ] Statements
-   - [ ] Delimiters
-   - [ ] Expression statements
-   - [ ] Loops
-     - [ ] `loop` (sugar for `while true`)
-     - [ ] `while`
-     - [ ] `for`
-   - [ ] Declarations
-     - [ ] Variable
-       - [ ] Static typing
-     - [ ] Function
-       - [ ] Variadics
-       - [ ] Static typing
-     - [ ] Class
-       - [ ] Fields
-       - [ ] Methods
-         - [ ] Static
-         - [ ] Instance
-       - [ ] Operator overloading
-     - [ ] Trait
-       - [ ] `trait`
-       - [ ] `impl…for`
-   - [ ] `use`
+   - [ ] Atoms
+     - [x] Literals
+     - [ ] Variables
+     - [ ] Getters
+   - [x] Prefix operators
+   - [ ] Postfix operators
+   - [x] Infix operators
+
 
 ## Standard library
 
-The stdlib of rod is going to be lightweight, so only the very basic functions are going to be featured.
+The stdlib of rod is going to be lightweight, so only essential functions are going to be featured.
 
 Please do not open issues/pull requests suggesting high-level features like advanced math functions, or GUIs.
 If you want those features, create a scripting API for them yourself.
 
  - [ ] Primitives
-   - `num`
-   - `str`
-   - `fn<T>(...args)`
+   - [ ] `bool`
+   - [ ] `num`
+   - [ ] `str`
+ - [ ] Basic types
+   - [ ] class `Fn<T>`
  - [ ] Data structures
    - [ ] class `Vec<T>`
    - [ ] class `Map<T>`
- - [ ] module `concurrency`
+ - [ ] module `concurrent`
    - [ ] class `Fiber`
  - [ ] module `reflect`
    - [ ] class `Module`
@@ -84,7 +53,7 @@ If you want those features, create a scripting API for them yourself.
 
 The embedding API is going to be split into several layers of abstraction.
 
-### Plain, old rod
+### Base rod
 Similar to Wren's API.
 
 ### autorod

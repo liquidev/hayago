@@ -12,6 +12,7 @@ type
     rvBool ## true or false
     rvNum  ## a Nim ``float``
     rvStr  ## a Nim ``string``
+    rvObj  ## an object
   RodValue* = object
     ## The base value type in rod. Stores its kind and Nim value, necessary \
     ## for dynamic typing.
@@ -20,6 +21,12 @@ type
     of rvBool: boolVal*: bool
     of rvNum:  numVal*: float
     of rvStr:  strVal*: string
+    of rvObj:  objVal*: RodObj
+  RodObj* = object
+    className*: string
+  RodVar* = object
+    className*: string
+    value*: RodValue
 
 proc typeName*(val: RodValue): string =
   case val.kind
@@ -27,6 +34,7 @@ proc typeName*(val: RodValue): string =
   of rvBool: "bool"
   of rvNum: "num"
   of rvStr: "str"
+  of rvObj: val.objVal.className
 
 proc `$`*(value: RodValue): string =
   result.add(value.typeName)

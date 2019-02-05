@@ -1,25 +1,31 @@
 import unittest
 
-import rod/[value, lexer, compiler, vm, std]
+import rod/[value, lexer, parser, compiler, vm, std]
 
-template debugCompile(source: string,
-                      compile: untyped): untyped {.dirty.} =
+template debugCompile(source: string, rule: string): untyped {.dirty.} =
   echo "--- vm ---"
   var vm = newRodVM()
   vm.registerStdlib()
   echo vm
 
-  var cp = vm.newCompiler(tokenize(source))
+  var node = parse(tokenize(source), rule)
+
+  var cp = vm.newCompiler()
   var module = newModule()
-  var chunk = module.newChunk()
-  discard compile
+  var chunk = cp.compile(module, node)
+
   echo "--- chunk ---"
   echo chunk
 
 suite "bytecode compilation":
   test "constants":
-    debugCompile("1"): cp.constant(chunk)
+    debugCompile("1", "literal")
   test "prefix ops":
-    debugCompile("-~1"): cp.prefixOp(chunk)
+    debugCompile("-~1", "prefixOp")
   test "infix ops":
-    debugCompile("2 * 3 + 5 * 4"): cp.infixOp9(chunk)
+    debugCompile("2 * 3 + 5 * 4", "infixOp")
+  test "variables":
+    debugCompile("""
+      let x = 2;
+      x * 2;
+    """, "script")

@@ -21,9 +21,12 @@ proc peek*(str: Stream, amt: int = 1, offset: int = 0): string =
   if str.pos + amt + offset - 1 < len(str.input):
     result = str.input[str.pos + offset..<str.pos + amt + offset]
 
+proc next*(str: var Stream, amt: int = 1) =
+  str.pos += amt
+
 proc consume*(str: var Stream, amt: int = 1): string =
   result = str.peek(amt)
-  str.pos += amt
+  str.next(amt)
 
 type
   TokenKind* = enum
@@ -179,7 +182,7 @@ keyword(tFalse, rtFalse, "false")
 rule tNum:
   if input.peek(2) == "0x" or input.peek(2) == "0X":
     var num = ""
-    discard input.consume(2)
+    input.next(2)
     while input.peek.toLower[0] in HexDigits:
       num.add(input.consume(1))
     if num != "":
@@ -195,12 +198,40 @@ rule tNum:
     if num != "":
       result = Token(kind: rtNum, numVal: parseFloat(num))
 rule tStr:
+  # raw literals
+  var isRaw = false
+  if input.peek == "r\"" or input.peek == "R\"":
+    input.next(1)
+    isRaw = true
+
   if input.peek == "\"":
     var str = ""
-    discard input.consume()
+    input.next()
     while input.peek != "\"":
+      # escape sequences
+      if not isRaw and input.peek == "\\":
+        input.next()
+        case input.peek
+        of "a": str.add("\a"); input.next()
+        of "b": str.add("\b"); input.next()
+        of "f": str.add("\f"); input.next()
+        of "n": str.add("\n"); input.next()
+        of "r": str.add("\r"); input.next()
+        of "t": str.add("\t"); input.next()
+        of "v": str.add("\v"); input.next()
+        of "e": str.add("\e"); input.next()
+        of "x":
+          input.next()
+          str.add(char parseHexInt(input.consume(2)))
+        of "u":
+          input.next()
+          str.add(char parseHexInt(input.consume(4)))
+        of "U":
+          input.next()
+          str.add(char parseHexInt(input.consume(8)))
+        else: str.add(input.consume())
       str.add(input.consume())
-    discard input.consume()
+    input.next()
     result = Token(kind: rtStr, strVal: str)
 # flow control
 keyword(kIf, rtIf, "if")
@@ -235,19 +266,19 @@ rule ident:
 # whitespace
 rule comment:
   if input.peek(2) == "//":
-    discard input.consume(2)
+    input.next(2)
     while input.peek != "\n":
-      discard input.consume()
+      input.next()
     result = Token(kind: rtIgnore)
   elif input.peek(2) == "/*":
-    discard input.consume(2)
+    input.next(2)
     while input.peek(2) != "*/":
-      discard input.consume()
+      input.next()
     result = Token(kind: rtIgnore)
 rule wsp:
   var isWsp = false
   while input.peek[0] in Whitespace:
-    discard input.consume()
+    input.next()
     isWsp = true
   if isWsp: result = Token(kind: rtIgnore)
 litRule(eof, rtEof, "\4")
