@@ -8,7 +8,6 @@ from strutils import `toHex`
 import deques
 import tables
 
-import lexer
 import parser
 import util
 import value
@@ -23,6 +22,8 @@ type
     ## A rod opcode, used in bytecode.
     # stack operations
     ropPushConst
+    ropPushGlobal
+    ropPopGlobal
     # calls
     ropCallForeign
     ropReturn
@@ -39,8 +40,9 @@ type
     lines*: seq[tuple[len: int, num: int]]
 
     consts*: seq[RodValue]
-    symbols*: seq[string]
   RodModule* = ref object
+    symbols*: seq[string]
+    globals*: TableRef[string, RodVar]
 
 proc `[]`(chunk: RodChunk, idx: int): uint8 =
   chunk.bytecode[idx]
@@ -59,11 +61,23 @@ proc newChunk*(module: RodModule): RodChunk =
 proc constId(chunk: var RodChunk, val: RodValue): int16 =
   for i, c in chunk.consts:
     case c.kind
+    of rvNull:
+      if val.kind == rvNull: return (int16 i)
+    of rvBool:
+      if val.kind == rvBool and c.boolVal == val.boolVal: return (int16 i)
     of rvNum:
-      if c.kind == rvNum and c.numVal == val.numVal: return (int16 i)
+      if val.kind == rvNum and c.numVal == val.numVal: return (int16 i)
+    of rvStr:
+      if val.kind == rvStr and c.strVal == val.strVal: return (int16 i)
     else: discard
   result = int16 len(chunk.consts)
   chunk.consts.add(val)
+
+proc symbolId(chunk: var RodChunk, symbol: string): int16 =
+  for i, s in chunk.module.symbols:
+    if s == symbol: return (int16 i)
+  result = int16 len(chunk.module.symbols)
+  chunk.module.symbols.add(symbol)
 
 proc write*(chunk: var RodChunk, bytes: varargs[uint8]) =
   chunk.bytecode.add(bytes)
@@ -150,7 +164,7 @@ proc compile(cp: var RodCompiler,
   for k, r in rules:
     if node.kind in k:
       return r(cp, node, chunk)
-  warn("compiling " & $node.kind & " is not implemented yet")
+  warn("compiling " & $node.kind & " is not yet implemented")
 
 proc compile*(cp: var RodCompiler, module: RodModule,
               node: RodNode): RodChunk =
@@ -182,7 +196,7 @@ rule {rnPrefix}:
   result = cp.compile(chunk, node.children[1])
   let
     op = node.children[0].op
-    sig = signature(result, op.text, 1)
+    sig = signature(result, op, 1)
   cp.writeCall(chunk, sig)
 
 rule {rnInfix}:
@@ -190,10 +204,20 @@ rule {rnInfix}:
     if n.kind == rnOperator:
       let
         op = n.op
-        sig = signature(result, op.text, 2)
+        sig = signature(result, op, 2)
       cp.writeCall(chunk, sig)
     else:
       if result == "":
         result = cp.compile(chunk, n)
       else:
         cp.compile(chunk, n)
+
+rule {rnLet}:
+  let
+    flags = node.children[0].flags
+    isMut = flags and 0b00000001
+  echo node
+
+rule {rnScript}:
+  for n in node.children:
+    cp.compile(chunk, n)

@@ -1,6 +1,6 @@
 import unittest
 
-import rod/[value, lexer, parser, compiler, vm, std]
+import rod/[value, parser, compiler, vm, std]
 
 template debugCompile(source: string, rule: string): untyped {.dirty.} =
   echo "--- vm ---"
@@ -8,7 +8,9 @@ template debugCompile(source: string, rule: string): untyped {.dirty.} =
   vm.registerStdlib()
   echo vm
 
-  var node = parse(tokenize(source), rule)
+  echo "--- AST ---"
+  var node = parse(source, rule)
+  echo node.toLispStr(false)
 
   var cp = vm.newCompiler()
   var module = newModule()
@@ -26,6 +28,6 @@ suite "bytecode compilation":
     debugCompile("2 * 3 + 5 * 4", "infixOp")
   test "variables":
     debugCompile("""
-      let x = 2;
+      x = 2;
       x * 2;
     """, "script")

@@ -9,32 +9,32 @@
 
 import vm
 
-proc rod_boolNot(vm: var RodVM) =
+proc boolNot(vm: var RodVM) =
   discard
 
-proc rod_numBnot(vm: var RodVM) =
+proc numBnot(vm: var RodVM) =
   discard
 
-proc rod_numNegate(vm: var RodVM) =
+proc numNegate(vm: var RodVM) =
   discard
 
-proc rod_numAdd(vm: var RodVM) =
+proc numAdd(vm: var RodVM) =
   discard
 
-proc rod_numSub(vm: var RodVM) =
+proc numSub(vm: var RodVM) =
   discard
 
-proc rod_numMul(vm: var RodVM) =
+proc numMul(vm: var RodVM) =
   discard
 
-proc rod_numDiv(vm: var RodVM) =
+proc numDiv(vm: var RodVM) =
   discard
 
 proc registerStdlib*(vm: var RodVM) =
-  vm.registerForeignFn("bool::!(_)", rod_boolNot)
-  vm.registerForeignFn("num::~(_)", rod_numBnot)
-  vm.registerForeignFn("num::-(_)", rod_numNegate)
-  vm.registerForeignFn("num::+(_,_)", rod_numAdd)
-  vm.registerForeignFn("num::-(_,_)", rod_numSub)
-  vm.registerForeignFn("num::*(_,_)", rod_numMul)
-  vm.registerForeignFn("num::/(_,_)", rod_numDiv)
+  vm.registerForeignFn("bool::!(_)", boolNot)
+  vm.registerForeignFn("num::~(_)", numBnot)
+  vm.registerForeignFn("num::-(_)", numNegate)
+  vm.registerForeignFn("num::+(_,_)", numAdd)
+  vm.registerForeignFn("num::-(_,_)", numSub)
+  vm.registerForeignFn("num::*(_,_)", numMul)
+  vm.registerForeignFn("num::/(_,_)", numDiv)

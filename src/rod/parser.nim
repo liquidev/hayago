@@ -4,58 +4,64 @@
 #~~
 
 import options
+import strutils
 import tables
-from strutils import indent, toBin
 import typeinfo
 
-import lexer
-
-export lexer.Token
-export lexer.TokenKind
-
 #~~
-# token stream
+# string stream
 #~~
 
 type
-  TokenStream = object
-    tokens: seq[Token]
+  StringStream = object
+    input: string
     pos: int
 
-proc peek(str: TokenStream): Token =
-  str.tokens[str.pos]
+proc finished(str: StringStream): bool =
+  str.pos == str.input.len
 
-proc peek(str: TokenStream, amt: int, off: int = 0): seq[Token] =
-  str.tokens[off + str.pos..off + str.pos + amt]
+proc peek(str: StringStream, amt: int = 1, offset: int = 0): string =
+  if str.pos + amt + offset <= len(str.input):
+    result = str.input[str.pos + offset..<str.pos + amt + offset]
 
-proc advance(str: var TokenStream, amt: int) =
+proc next(str: var StringStream, amt: int = 1) =
   str.pos += amt
 
-proc next(str: var TokenStream) =
-  str.advance(1)
-
-proc consume(str: var TokenStream): Token =
-  result = str.peek()
-  str.next()
-
-proc consume(str: var TokenStream, amt: int): seq[Token] =
+proc consume(str: var StringStream, amt: int = 1): string =
   result = str.peek(amt)
-  str.advance(amt)
+  str.next(amt)
 
-proc textPos(str: TokenStream): tuple[ln, col: int] =
-  (str.peek().ln, str.peek().col)
+proc peekAny(str: StringStream,
+             arr: openarray[string],
+             resultLen: var int): bool =
+  for t in arr:
+    if str.peek(t.len) == t:
+      resultLen = t.len
+      return true
+
+proc ln(str: StringStream): int =
+  for c in str.input[0..str.pos]:
+    if c == '\n': result += 1
+
+proc col(str: StringStream): int =
+  for c in str.input[0..str.pos]:
+    result += 1
+    if c in NewLines: result = 0
+
+proc pos(str: StringStream): tuple[ln, col: int] =
+  (str.ln, str.col)
 
 #~~
 # parser
 #~~
 
 type
-  RodParseRule = proc (tokensArg: var TokenStream): RodNode {.nimcall.}
+  RodParseRule = proc (inputArg: var StringStream): RodNode {.nimcall.}
 
   RodNodeKind* = enum
     ## The AST of rod is similar to Nim's, and in a future language update
     ## macros may be implemented.
-    rnEmpty, rnError
+    rnEmpty, rnError, rnEof
     # leaf/terminal nodes
     rnFlags
     rnNull, rnBool, rnNum, rnStr
@@ -78,7 +84,7 @@ type
     of rnFlags:
       flags*: uint8
     of rnOperator:
-      op*: Token
+      op*: string
     of rnBool:
       boolVal*: bool
     of rnNum:
@@ -93,27 +99,28 @@ type
     ln*, col*: int
 
 const
-  RodLiterals = { rtNull, rtTrue, rtFalse, rtNum, rtStr }
+  RodPrefixOps = ["+", "-", "!", "~"]
 
-  RodPrefixOps = { rtPlus, rtMinus, rtExcl, rtTilde }
+  RodMultOps = ["*", "/", "%", "<<", ">>"]
+  RodAddOps = ["+", "-", "|"]
+  RodBitAndOp = ["&"]
+  RodRangeOps = ["..", "..."]
+  RodCompareOps = ["<", ">", "<=", ">=", "==", "!="]
+  RodIsOp = ["is", "in"]
+  RodAndOp = ["&&"]
+  RodOrOp = ["||"]
+  RodAssignOp = ["=", ":="]
 
-  RodMultOps = { rtStar, rtSlash, rtPercent }
-  RodAddOps = { rtPlus, rtMinus, rtPipe }
-  RodBitAndOp = { rtAmp }
-  RodRangeOps = { rtDDot, rtTDot }
-  RodCompareOps = { rtLess, rtMore, rtLessEq, rtMoreEq, rtEq, rtNotEq }
-  RodIsOp = { rtIs }
-  RodAndOp = { rtDAmp }
-  RodOrOp = { rtDPipe }
-
-  RodOverloadableOps = [
-    # standard operators
-    @[rtPlus], @[rtMinus], @[rtStar], @[rtSlash], @[rtPercent],
-    @[rtPipe], @[rtDPipe], @[rtAmp], @[rtDAmp], @[rtDDot], @[rtTDot],
-    @[rtLess], @[rtMore], @[rtLessEq], @[rtMoreEq], @[rtEq], @[rtNotEq],
-    @[rtIs], @[rtDAmp], @[rtDPipe],
-    # compound operators
-    @[rtLBracket, rtRBracket, rtAssign], @[rtLBracket, rtRBracket] # index
+  RodSpecialMethods = [
+    # overloadable operators
+    "+", "-", "*", "/", "%",
+    "|", "||", "&", "&&", "..", "...",
+    "<", ">", "<=", ">=", "==", "!=",
+    "is",
+    "[]=", "[]",
+    # metamethods
+    ".ctor", ".dtor",
+    ".call", ".contains"
   ]
 
 proc toLispStr*(node: RodNode, compact: bool = true): string =
@@ -122,7 +129,7 @@ proc toLispStr*(node: RodNode, compact: bool = true): string =
   case node.kind
   of rnEmpty: discard
   of rnFlags: result.add(" " & toBin(node.flags.BiggestInt, 8))
-  of rnOperator: result.add(" " & $node.op.kind)
+  of rnOperator: result.add(" " & $node.op)
   of rnBool: result.add(" " & $node.boolVal)
   of rnNum: result.add(" " & $node.numVal)
   of rnStr: result.add(" \"" & node.strVal & "\"")
@@ -135,128 +142,235 @@ proc toLispStr*(node: RodNode, compact: bool = true): string =
 
 proc `$`*(node: RodNode): string = node.toLispStr
 
-proc error(tokens: var TokenStream, message: string) =
+proc error(input: var StringStream, message: string) =
   var exceptn = newException(ParserError, "")
-  exceptn.ln = tokens.peek().ln + 1
-  exceptn.col = tokens.peek().col
+  exceptn.ln = input.ln + 1
+  exceptn.col = input.col
   exceptn.msg = "ln " & $exceptn.ln & ":" & $exceptn.col & ": " & message
   raise exceptn
 
-proc node(tokens: TokenStream,
+proc node(input: StringStream,
           kind: RodNodeKind, children: openArray[RodNode] = []): RodNode =
   result = RodNode(
-    pos: tokens.textPos(),
+    pos: pos(input),
     kind: kind
   )
   for child in children:
     result.children.add(child)
 
-proc ident(tokens: TokenStream, name: string): RodNode =
-  RodNode(pos: tokens.textPos(), kind: rnIdent, ident: name)
+proc ident(input: StringStream, name: string): RodNode =
+  RodNode(pos: pos(input), kind: rnIdent, ident: name)
 
-proc flags(tokens: TokenStream, flags: uint8): RodNode =
-  RodNode(pos: tokens.textPos(), kind: rnFlags, flags: flags)
+proc flags(input: StringStream, flags: uint8): RodNode =
+  RodNode(pos: pos(input), kind: rnFlags, flags: flags)
 
 var rules* = initTable[string, RodParseRule]()
 
 template sandbox(body: untyped) {.dirty.} =
-  let pos = tokens.pos
-  result = tokens.node(rnEmpty)
+  let pos = input.pos
+  result = input.node(rnEmpty)
   body
   if result.kind == rnEmpty:
-    tokens.pos = pos
+    input.pos = pos
 
 template rule(name: string, body: untyped): untyped {.dirty.} =
-  rules.add(name) do (tokens: var TokenStream) -> RodNode:
+  rules.add(name) do (input: var StringStream) -> RodNode:
     sandbox: body
 
 template exec(rule: string): untyped {.dirty.} =
-  rules[rule](tokens)
+  rules[rule](input)
 
-proc match(tokens: var TokenStream, kind: TokenKind): bool =
-  if tokens.peek().kind == kind:
-    discard tokens.consume()
+const
+  Whitespace = [" ", "\t", "\v", "\r", "\n", "\f"]
+
+proc ign(input: var StringStream): bool {.discardable.} =
+  let startPos = input.pos
+  while not input.finished:
+    var len = 0
+    if input.peekAny(Whitespace, len):
+      while input.peekAny(Whitespace, len):
+        input.next(len)
+      continue
+    elif input.peek(2) == "//":
+      input.next(2)
+      while not input.finished:
+        input.next()
+        if input.peek(1) == "\n" or
+          input.peek(1) == "\r" or
+          input.peek(2) == "\r\n" or
+          input.peek(2) == "\n\r":
+          input.next()
+          break
+      continue
+    elif input.peek(2) == "/*":
+      input.next(2)
+      while input.peek(2) != "*/":
+        input.next()
+      input.next(2)
+      continue
+    break
+  result = input.pos != startPos
+
+template ign: untyped {.dirty.} =
+  input.ign()
+
+proc match(input: var StringStream, str: string): bool =
+  if input.peek(str.len) == str:
+    discard input.consume(str.len)
     return true
 
-proc firstMatch(tokensArg: var TokenStream,
+proc firstMatch(input: var StringStream,
                 ruleNames: varargs[string]): RodNode =
+  var lastErr: ref ParserError
   for r in ruleNames:
-    var tokens: TokenStream
-    shallowCopy(tokens, tokensArg)
-    let node = exec r
-    if node.kind != rnEmpty:
-      tokensArg = tokens
-      return node
+    try:
+      sandbox:
+        result = exec r
+    except ParserError as pe:
+      lastErr = pe
+  if lastErr != nil:
+    raise lastErr
 
-proc delim(tokens: var TokenStream,
-           begin, delimiter, fin: TokenKind,
+proc lastMatch(input: var StringStream,
+               ruleNames: varargs[string]): RodNode =
+  for r in ruleNames:
+    sandbox:
+      let ruleResult = exec r
+      if ruleResult.kind != rnEmpty:
+        result = ruleResult
+
+proc delim(input: var StringStream,
+           begin, delimiter, fin: string,
            rule: string): Option[seq[RodNode]] =
-  if tokens.peek().kind == begin:
-    discard tokens.consume()
+  if input.match(begin):
+    ign()
     var nodes: seq[RodNode]
-    while tokens.peek().kind != rtEof:
-      let
-        node = exec rule
-        next = tokens.consume()
+    while not input.finished:
+      ign()
+      let node = exec rule
       if node.kind != rnEmpty: nodes.add(node)
-      if next.kind == delimiter:
+      if input.match(delimiter):
         continue
-      elif next.kind == fin:
+      elif input.match(fin):
         break
       else:
-        tokens.error("Unexpected token \"" & tokens.peek().text & "\"")
+        input.error("Unexpected character \"" & input.peek() & "\"")
     result = some(nodes)
   else:
     result = none(seq[RodNode])
+
+# [!] WARNING: MESSY CODE INCOMING [!]
+# Since rod switched to a lexless compiler, this code has gotten unbearably
+# messy. It needs rewriting to an easier-to-maintain DSL (macros FTW),
+# but this hasn't been done yet.
+# TODO: re-write the parser to use a DSL
 
 # ~ syntax rules ~
 # There's documentation above syntax rules written in extended PEG.
 # Differences:
 #  - rules are in camelCase;
-#  - literal tokens are '' literals; variable tokens are in CamelCase;
+#  - literals are quoted;
 #  - functions are allowed for simplicity:
 #    - delim(begin, separator, end) -> rule
 #  - there's lookbehind <() and lookahead >()
 
-# literal → 'null' | 'true' | 'false' | Num | Str
-rule "literal":
-  if tokens.peek().kind in RodLiterals:
-    let tok = tokens.consume()
-    case tok.kind
-    of rtNull:
-      result = tokens.node(rnNull)
-    of rtTrue, rtFalse:
-      result = RodNode(pos: tokens.textPos(),
-        kind: rnBool, boolVal: tok.kind == rtTrue)
-    of rtNum:
-      result = RodNode(pos: tokens.textPos(),
-        kind: rnNum, numVal: tok.numVal)
-    of rtStr:
-      result = RodNode(pos: tokens.textPos(),
-        kind: rnStr, strVal: tok.strVal)
-    else: discard
+# eof → .
+rule "eof":
+  result = input.node(rnEof)
 
-# variable → Ident
+# null → 'null'
+rule "null":
+  if input.match("null"):
+    result = RodNode(pos: pos(input), kind: rnNull)
+
+# bool → 'true' | 'false'
+rule "bool":
+  if input.match("true"):
+    result = RodNode(pos: pos(input), kind: rnBool, boolVal: true)
+  elif input.match("true"):
+    result = RodNode(pos: pos(input), kind: rnBool, boolVal: false)
+
+# num → (('0b' | '0B') [0-1]+)
+#     | (('0o' | '0O') [0-7]+)
+#     | (('0x' | '0X') [0-9a-fA-F]+)
+#     | ([0-9]+ ('.' [0-9]+)?)
+#     | 'NaN' | 'Inf' | '-Inf'
+rule "num":
+  # TODO: clean up repetitive code
+  var numStr = ""
+  # binary literals
+  if input.match("0b") or input.match("0B"):
+    while input.peek()[0] in { '0'..'1' }:
+      numStr.add(input.consume())
+    return RodNode(pos: pos(input),
+      kind: rnNum, numVal: float parseBinInt(numStr))
+  # octal literals
+  elif input.match("0o") or input.match("0O"):
+    while input.peek()[0] in { '0'..'7' }:
+      numStr.add(input.consume())
+    return RodNode(pos: pos(input),
+      kind: rnNum, numVal: float parseOctInt(numStr))
+  # hex literals
+  elif input.match("0x") or input.match("0X"):
+    while input.peek().toLower[0] in HexDigits:
+      numStr.add(input.consume())
+      return RodNode(pos: pos(input),
+        kind: rnNum, numVal: float parseHexInt(numStr))
+  # float literals
+  else:
+    if input.peek().len > 0:
+      while input.peek()[0] in Digits:
+        numStr.add(input.consume())
+      if input.peek() == "." and input.peek(1, 1)[0] in Digits:
+        input.next()
+        while input.peek()[0] in Digits:
+          numStr.add(input.consume())
+      if numStr == "":
+        if input.match("NaN"): numStr = "nan"
+        elif input.match("Inf"): numStr = "inf"
+        elif input.match("-Inf"): numStr = "-inf"
+      if numStr != "":
+        return RodNode(pos: pos(input),
+          kind: rnNum, numVal: float parseFloat(numStr))
+
+rule "str":
+  if input.match("\""):
+    var str = ""
+    while not input.match("\""):
+      str.add(input.consume())
+
+# literal → null | bool | num | str
+rule "literal":
+  result = input.firstMatch("null", "bool", "num", "str")
+
+# ident
+rule "ident":
+  if input.peek().len > 0:
+    if input.peek()[0] in IdentStartChars:
+      var ident = input.consume()
+      while input.peek()[0] in IdentChars:
+        ident.add(input.consume())
+      result = input.ident(ident)
+
 rule "variable":
-  if tokens.peek().kind == rtIdent:
-    result = tokens.node(rnVariable,
-      [
-        tokens.ident(tokens.consume().ident)
-      ]
-    )
+  result = input.node(rnVariable, [exec "ident"])
 
 # atom → parenExpr | prefixOp | constructor | call | namespace
 rule "atom":
-  result = tokens.firstMatch(
+  result = input.firstMatch(
     "parenExpr", "literal", "variable"
   )
 
 # prefixOp → PrefixOperator atom
 rule "prefixOp":
-  if tokens.peek().kind in RodPrefixOps:
-    result = tokens.node(rnPrefix,
+  var opLen = 0
+  if input.peekAny(RodPrefixOps, opLen):
+    let opNode = RodNode(pos: pos(input),
+      kind: rnOperator, op: input.consume(opLen))
+    ign()
+    result = input.node(rnPrefix,
       [
-        RodNode(pos: tokens.textPos(), kind: rnOperator, op: tokens.consume()),
+        opNode,
         exec "atom"
       ]
     )
@@ -264,16 +378,19 @@ rule "prefixOp":
     result = exec "atom"
 
 # infix(higher, Op) → higher (Op higher)*
-template infixOps(name: string, higher: string, ops: set[TokenKind]): untyped =
+template infixOps(name: string, higher: string, ops: openarray[string]): untyped =
   rule name:
-    var chain = @[exec higher]
-    while tokens.peek().kind in ops:
-      let
-        op = tokens.consume()
-        next = exec higher
-      chain.add([next, RodNode(pos: tokens.textPos(), kind: rnOperator, op: op)])
+    var
+      chain = @[exec higher]
+      opLen = 0
+    ign()
+    while input.peekAny(ops, opLen):
+      let op = input.consume()
+      ign()
+      let next = exec higher
+      chain.add([next, RodNode(pos: pos(input), kind: rnOperator, op: op)])
     if chain.len == 1: result = chain[0]
-    else: result = tokens.node(rnInfix, chain)
+    else: result = input.node(rnInfix, chain)
 
 infixOps("infixOr", "infixAnd", RodOrOp)
 infixOps("infixAnd", "infixIs", RodAndOp)
@@ -289,67 +406,89 @@ rule "infixOp":
   result = exec "infixOr"
 
 rule "assign":
+  echo "assign"
   var
-    vars = tokens.delim(rtLParen, rtComma, rtRParen, "expr")
-    assignmentTuple = tokens.node(rnList)
+    vars = input.delim("(", ",", ")", "expr")
+    assignmentTuple = input.node(rnList)
   if vars.isSome(): assignmentTuple.children = vars.get()
   else:
     assignmentTuple.children.add(exec "expr")
-  if tokens.match(rtAssign):
+  ign()
+  if input.match("="):
+    ign()
     let right = exec "expr"
-    result = tokens.node(rnAssign, [assignmentTuple, right])
+    result = input.node(rnAssign, [assignmentTuple, right])
 
 rule "expr":
-  result = tokens.firstMatch("infixOp")
+  result = input.firstMatch("infixOp", "assign")
+  echo result
 
 rule "parenExpr":
-  if tokens.match(rtLParen):
+  if input.match("("):
+    ign()
     let expression = exec "expr"
-    if tokens.match(rtRParen):
+    ign()
+    if input.match(")"):
       result = expression
 
+rule "exprStmt":
+  result = exec "expr"
+  if result.kind != rnEmpty:
+    ign()
+    if not input.match(";"):
+      input.error("Expected a semicolon ';'")
+
 rule "let":
-  if tokens.match(rtLet):
-    var flags = 0'u8
-    flags += uint8(tokens.match(rtMut)) shl 0
-    var assignments = @[exec "assign"]
-    while tokens.match(rtComma):
-      assignments.add(exec "assign")
-    result = tokens.node(rnLet,
-      [
-        tokens.flags(flags),
-        tokens.node(rnList, assignments)
-      ])
+  if input.match("let"):
+    if ign():
+      var flags = 0'u8
+      flags += uint8(input.match("mut")) shl 0
+      ign()
+      var assignments = @[exec "assign"]
+      ign()
+      while input.match(","):
+        ign()
+        assignments.add(exec "assign")
+      ign()
+      if input.match(";"):
+        result = input.node(rnLet,
+          [
+            input.flags(flags),
+            input.node(rnList, assignments)
+          ])
+      else:
+        input.error("Expected a semicolon ';'")
 
 rule "stmt":
-  let statement = tokens.firstMatch("block", "expr", "let")
-  if tokens.match(rtStmtEnd) or
-     tokens.peek(1, -1)[0].kind == rtRBrace:
-    discard tokens.match(rtStmtEnd)
-    result = statement
-  elif tokens.peek().kind == rtRBrace:
-    result = tokens.node(rnReturn, [statement])
-  else: tokens.error("Expected a semicolon ';'")
+  result = input.firstMatch("let", "block", "exprStmt")
 
 rule "block":
-  if tokens.match(rtLBrace):
+  if input.match("{"):
     var statements: seq[RodNode]
-    while not tokens.match(rtRBrace):
+    ign()
+    while not input.match("}"):
       statements.add(exec "stmt")
-    result = tokens.node(rnBlock, statements)
+      ign()
+    result = input.node(rnBlock, statements)
 
 rule "decl":
-  result = tokens.firstMatch("stmt")
+  result = input.firstMatch("stmt")
 
 rule "script":
-  var statements: seq[RodNode]
-  while not tokens.match(rtEof):
-    statements.add(exec "decl")
+  var
+    statements: seq[RodNode]
+    prevPos: int
+  while not input.finished:
+    prevPos = input.pos
+    ign()
+    statements.add(input.firstMatch("decl", "eof"))
+    echo statements
+    ign()
+    if input.pos == prevPos:
+      input.error("Unexpected input: '" & input.peek() & "'")
+  ign()
   result = RodNode(kind: rnScript, children: statements)
 
-proc initTokenStream*(tokens: seq[Token]): TokenStream =
-  result = TokenStream(tokens: tokens)
-
-proc parse*(tokens: seq[Token], parser: string = "script"): RodNode =
-  var tokens = initTokenStream(tokens)
+proc parse*(input: string, parser: string = "script"): RodNode =
+  var input = StringStream(input: input)
   result = exec parser

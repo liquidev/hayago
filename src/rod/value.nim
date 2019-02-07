@@ -25,7 +25,7 @@ type
   RodObj* = object
     className*: string
   RodVar* = object
-    className*: string
+    isMutable*: bool
     value*: RodValue
 
 proc typeName*(val: RodValue): string =
