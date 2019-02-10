@@ -22,10 +22,13 @@ type
     of rvNum:  numVal*: float
     of rvStr:  strVal*: string
     of rvObj:  objVal*: RodObj
+  RodClass* = object
+    name*: string
   RodObj* = object
-    className*: string
+    class*: RodClass
   RodVar* = object
     isMutable*: bool
+    typeName*: string
     value*: RodValue
 
 proc typeName*(val: RodValue): string =
@@ -34,7 +37,7 @@ proc typeName*(val: RodValue): string =
   of rvBool: "bool"
   of rvNum: "num"
   of rvStr: "str"
-  of rvObj: val.objVal.className
+  of rvObj: val.objVal.class.name
 
 proc `$`*(value: RodValue): string =
   result.add(value.typeName)
@@ -60,10 +63,7 @@ proc strVal*(val: string): RodValue =
   ## Creates a rod string value.
   RodValue(kind: rvStr, strVal: val)
 
-proc signature*(class: string, mtd: string, args: openArray[string]): string =
-  if class != "":
-    result.add(class)
-    result.add("::")
+proc signature*(mtd: string, args: openArray[string]): string =
   result.add(mtd)
   result.add("(")
   for i, a in args:
@@ -71,6 +71,5 @@ proc signature*(class: string, mtd: string, args: openArray[string]): string =
     if i < len(args) - 1: result.add(",")
   result.add(")")
 
-proc signature*(class: string, mtd: string,
-                args: int, argT: string = "_"): string =
-  signature(class, mtd, newSeqWith(args, argT))
+proc signature*(mtd: string, args: int, argT: string = "_"): string =
+  signature(mtd, newSeqWith(args, argT))

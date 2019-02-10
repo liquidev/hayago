@@ -30,11 +30,23 @@ proc numMul(vm: var RodVM) =
 proc numDiv(vm: var RodVM) =
   discard
 
+proc println(vm: var RodVM) =
+  discard
+
 proc registerStdlib*(vm: var RodVM) =
-  vm.registerForeignFn("bool::!(_)", boolNot)
-  vm.registerForeignFn("num::~(_)", numBnot)
-  vm.registerForeignFn("num::-(_)", numNegate)
-  vm.registerForeignFn("num::+(_,_)", numAdd)
-  vm.registerForeignFn("num::-(_,_)", numSub)
-  vm.registerForeignFn("num::*(_,_)", numMul)
-  vm.registerForeignFn("num::/(_,_)", numDiv)
+  # top-level
+  vm.addFn("println(_)", println)
+
+  # class-level
+  var boolClass = newForeignClass()
+  boolClass.addFn("!(_)", boolNot)
+  vm.addClass(boolClass, "bool")
+
+  var numClass = newForeignClass()
+  numClass.addFn("~(_)", numBnot)
+  numClass.addFn("-(_)", numNegate)
+  numClass.addFn("+(_,_)", numAdd)
+  numClass.addFn("-(_,_)", numSub)
+  numClass.addFn("*(_,_)", numMul)
+  numClass.addFn("/(_,_)", numDiv)
+  vm.addClass(numClass, "num")

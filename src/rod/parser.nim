@@ -72,11 +72,11 @@ type
     # operators
     rnPrefix, rnInfix, rnAssign
     # variables
-    rnVariable
+    rnVariable, rnCall
     # statements
     rnLet
     rnReturn
-    rnBlock, rnScript
+    rnStmt, rnBlock, rnScript
   RodNode* = object
     pos*: tuple[ln, col: int]
     case kind*: RodNodeKind
@@ -105,17 +105,17 @@ const
   RodAddOps = ["+", "-", "|"]
   RodBitAndOp = ["&"]
   RodRangeOps = ["..", "..."]
-  RodCompareOps = ["<", ">", "<=", ">=", "==", "!="]
+  RodCompareOps = ["<", ">", "<=", ">=", "==", "!=", "<=>"]
   RodIsOp = ["is", "in"]
   RodAndOp = ["&&"]
   RodOrOp = ["||"]
-  RodAssignOp = ["=", ":="]
+  RodAssignOps = ["=", ":="]
 
   RodSpecialMethods = [
     # overloadable operators
     "+", "-", "*", "/", "%",
     "|", "||", "&", "&&", "..", "...",
-    "<", ">", "<=", ">=", "==", "!=",
+    "<", ">", "<=", ">=", "==", "!=", "<=>",
     "is",
     "[]=", "[]",
     # metamethods
@@ -141,6 +141,9 @@ proc toLispStr*(node: RodNode, compact: bool = true): string =
   result.add(")")
 
 proc `$`*(node: RodNode): string = node.toLispStr
+
+proc `[]`*(node: RodNode, index: int): RodNode =
+  node.children[index]
 
 proc error(input: var StringStream, message: string) =
   var exceptn = newException(ParserError, "")
@@ -225,19 +228,13 @@ proc firstMatch(input: var StringStream,
   for r in ruleNames:
     try:
       sandbox:
-        result = exec r
+        let ruleResult = exec r
+        if ruleResult.kind != rnEmpty:
+          return ruleResult
     except ParserError as pe:
       lastErr = pe
   if lastErr != nil:
     raise lastErr
-
-proc lastMatch(input: var StringStream,
-               ruleNames: varargs[string]): RodNode =
-  for r in ruleNames:
-    sandbox:
-      let ruleResult = exec r
-      if ruleResult.kind != rnEmpty:
-        result = ruleResult
 
 proc delim(input: var StringStream,
            begin, delimiter, fin: string,
@@ -290,48 +287,23 @@ rule "bool":
   elif input.match("true"):
     result = RodNode(pos: pos(input), kind: rnBool, boolVal: false)
 
-# num → (('0b' | '0B') [0-1]+)
-#     | (('0o' | '0O') [0-7]+)
-#     | (('0x' | '0X') [0-9a-fA-F]+)
-#     | ([0-9]+ ('.' [0-9]+)?)
-#     | 'NaN' | 'Inf' | '-Inf'
 rule "num":
   # TODO: clean up repetitive code
   var numStr = ""
-  # binary literals
-  if input.match("0b") or input.match("0B"):
-    while input.peek()[0] in { '0'..'1' }:
+  if input.peek().len > 0:
+    while input.peek()[0] in Digits:
       numStr.add(input.consume())
-    return RodNode(pos: pos(input),
-      kind: rnNum, numVal: float parseBinInt(numStr))
-  # octal literals
-  elif input.match("0o") or input.match("0O"):
-    while input.peek()[0] in { '0'..'7' }:
-      numStr.add(input.consume())
-    return RodNode(pos: pos(input),
-      kind: rnNum, numVal: float parseOctInt(numStr))
-  # hex literals
-  elif input.match("0x") or input.match("0X"):
-    while input.peek().toLower[0] in HexDigits:
-      numStr.add(input.consume())
-      return RodNode(pos: pos(input),
-        kind: rnNum, numVal: float parseHexInt(numStr))
-  # float literals
-  else:
-    if input.peek().len > 0:
+    if input.match(".") and input.peek()[0] in Digits:
+      numStr.add(".")
       while input.peek()[0] in Digits:
         numStr.add(input.consume())
-      if input.peek() == "." and input.peek(1, 1)[0] in Digits:
-        input.next()
-        while input.peek()[0] in Digits:
-          numStr.add(input.consume())
-      if numStr == "":
-        if input.match("NaN"): numStr = "nan"
-        elif input.match("Inf"): numStr = "inf"
-        elif input.match("-Inf"): numStr = "-inf"
-      if numStr != "":
-        return RodNode(pos: pos(input),
-          kind: rnNum, numVal: float parseFloat(numStr))
+    if numStr == "":
+      if input.match("NaN"): numStr = "nan"
+      elif input.match("Inf"): numStr = "inf"
+      elif input.match("-Inf"): numStr = "-inf"
+    if numStr != "":
+      return RodNode(pos: pos(input),
+        kind: rnNum, numVal: parseFloat(numStr))
 
 rule "str":
   if input.match("\""):
@@ -343,7 +315,7 @@ rule "str":
 rule "literal":
   result = input.firstMatch("null", "bool", "num", "str")
 
-# ident
+# ident → [a-zA-Z_] [a-zA-Z_0-9]+
 rule "ident":
   if input.peek().len > 0:
     if input.peek()[0] in IdentStartChars:
@@ -352,13 +324,26 @@ rule "ident":
         ident.add(input.consume())
       result = input.ident(ident)
 
+# variable → ident
 rule "variable":
-  result = input.node(rnVariable, [exec "ident"])
+  let ident = exec "ident"
+  if ident.kind != rnEmpty:
+    result = input.node(rnVariable, [ident])
+
+rule "call":
+  let
+    name = exec "ident"
+    args = input.delim("(", ",", ")", "expr")
+  if args.isSome():
+    result = input.node(rnCall, [
+      name,
+      input.node(rnList, args.get())
+    ])
 
 # atom → parenExpr | prefixOp | constructor | call | namespace
 rule "atom":
   result = input.firstMatch(
-    "parenExpr", "literal", "variable"
+    "parenExpr", "literal", "call", "variable"
   )
 
 # prefixOp → PrefixOperator atom
@@ -392,6 +377,16 @@ template infixOps(name: string, higher: string, ops: openarray[string]): untyped
     if chain.len == 1: result = chain[0]
     else: result = input.node(rnInfix, chain)
 
+rule "assign":
+  let left = exec "infixOr"
+  ign()
+  if input.match("="):
+    ign()
+    let right = exec "infixOr"
+    result = input.node(rnAssign, [left, right])
+  else:
+    result = left
+
 infixOps("infixOr", "infixAnd", RodOrOp)
 infixOps("infixAnd", "infixIs", RodAndOp)
 infixOps("infixIs", "infixCmp", RodIsOp)
@@ -403,25 +398,10 @@ infixOps("infixMult", "prefixOp", RodMultOps)
 
 # infixOp → infixOr
 rule "infixOp":
-  result = exec "infixOr"
-
-rule "assign":
-  echo "assign"
-  var
-    vars = input.delim("(", ",", ")", "expr")
-    assignmentTuple = input.node(rnList)
-  if vars.isSome(): assignmentTuple.children = vars.get()
-  else:
-    assignmentTuple.children.add(exec "expr")
-  ign()
-  if input.match("="):
-    ign()
-    let right = exec "expr"
-    result = input.node(rnAssign, [assignmentTuple, right])
+  result = exec "assign"
 
 rule "expr":
-  result = input.firstMatch("infixOp", "assign")
-  echo result
+  result = input.firstMatch("infixOp")
 
 rule "parenExpr":
   if input.match("("):
@@ -432,8 +412,9 @@ rule "parenExpr":
       result = expression
 
 rule "exprStmt":
-  result = exec "expr"
-  if result.kind != rnEmpty:
+  let expression = exec "expr"
+  if expression.kind != rnEmpty:
+    result = input.node(rnStmt, [expression])
     ign()
     if not input.match(";"):
       input.error("Expected a semicolon ';'")
@@ -482,7 +463,6 @@ rule "script":
     prevPos = input.pos
     ign()
     statements.add(input.firstMatch("decl", "eof"))
-    echo statements
     ign()
     if input.pos == prevPos:
       input.error("Unexpected input: '" & input.peek() & "'")

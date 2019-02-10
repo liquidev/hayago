@@ -23,6 +23,12 @@ Those are the features still to be implemented.
    - [ ] Postfix operators
    - [x] Infix operators
 
+## Compiler
+
+### Features
+
+ - [x] Foreign calls
+ - [ ] Variables
 
 ## Standard library
 

@@ -28,6 +28,8 @@ suite "bytecode compilation":
     debugCompile("2 * 3 + 5 * 4", "infixOp")
   test "variables":
     debugCompile("""
-      x = 2;
+      let mut x = 2;
       x * 2;
+      x = 3;
+      println(x);
     """, "script")
