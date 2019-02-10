@@ -15,20 +15,16 @@ Rod::say_hello("world");
 ```
 
 ### Features
- - **A fast VM.** rod uses a small, yet modular instruction set for its VM,
+ - **A fast VM.** rod uses a small, yet efficient instruction set for its VM,
    making code execution very fast.
  - **Easy-to-understand syntax.** The language's syntax is similar to Rust,
    but without a lot of the hard stuff – there's no lifetimes,
    it's dynamically typed, and it has classes.
- - **Source code protection.** It's possible to save the bytecode directly to a
-   binary format for source code protection. Debugging symbols are stripped,
-   and a separate symbol table must be used.
  - **Easy API.** rod is easily embeddable into other applications. Its FFI
    can automatically generate the necessary wrappers for just about any object,
    enum, or procedure.
  - **Concurrency.** rod's concurrency is very lightweight. It uses fibers to
-   achieve simple, yet powerful parallelization, without giving up
-   thread-safety.
+   achieve fast, yet powerful parallelization, without giving up thread-safety.
 
 ### Running rod
 To run rod, compile it from source code:
