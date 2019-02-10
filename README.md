@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="rod-logo-svg.svg" width="256px"/>
+</p>
+
 # rod
 
 A fast, object-oriented, embeddable programming language for Nim,
