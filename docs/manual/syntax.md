@@ -1,63 +1,52 @@
 # Syntax
 
-rod's syntax is minimal, yet intuitive, giving the programmer a simple, yet easy to follow set of rules.
+rod's syntax is highly inspired by Rust – it uses similar, short, easy-to-type
+keywords, but it also features advanced object orientation.
 
 ## Comments
 
-Comments are ignored during lexing. They divide into single-line, and multi-line:
+rod features single-line, and multi-line comments:
 
-```
-// a single-line comment
-// is terminated by a newline (\n)
-
+```rust
+// A single-line comment is preceded with `//`
 /*
-  a multi-line comment is terminated with a star and a slash
-  /*
-    unlike C (and many other languages), multi-line comments can be nested
-   */
+ * A multi-line comment starts with '/*' and ends with '*/'
+ * Notice how the above use of /* */ doesn't break anything: that's because
+ * multi-line comments can be nested.
  */
 ```
 
 ## Literals
 
-A literal is the smallest part of rod's syntax. They go directly into bytecode without any extra processing.
+The core syntax is comprised of literals. They're the smallest AST node,
+and so, are leaf (non-terminal) nodes.
 
-Here are the available literals:
+### Null
 
+Unlike Rust, rod features a `null`. It's simply written as `null`.
+The presence of `null` means that there is no usable value in a variable
+or field, however, options are preferred over `null` to signify a value
+intentionally left uninitialized.
+
+### Booleans
+
+rod has a standard, distinct boolean type. Its value is either `true` or
+`false`. Nothing too fancy.
+
+### Numbers
+
+rod supports standard integer, floating point, and hex literals:
+```rust
+5 // integer literal
+3.14159 // floating point literal
+0x30de // hex literal
 ```
-// null
-null
 
-// booleans
-true false
+### Strings
 
-// numbers
-42 123
-3.14159
-
-// strings
+In rod, strings are simply enclosed in `""`:
+```rust
 "Hello, World!"
-"Hello,
-World!" // strings can span over multiple lines
-"Hello,\nWorld!" // escape sequences are supported
-r"C:\Windows" // raw string literals don't process escape sequences
 ```
-
-### String escape sequences
-
-*Note: Escape sequences are case-sensitive.*
-
-| Sequence | Description |
-| --- | --- |
-| `\a` | Terminal bell |
-| `\b` | Backspace |
-| `\f` | Form feed |
-| `\n` | Line feed |
-| `\r` | Carriage return |
-| `\t` | Horizontal tabulator |
-| `\v` | Vertical tabulator |
-| `\e` | Escape |
-| `\xHH` | Byte. `HH` are two hex digits |
-| `\uHHHH` | 16-bit Unicode character. `HHHH` are four hex digits |
-| `\UHHHHHHHH` | 32-bit Unicode character. `HHHHHHHH` are eight hex digits |
-| `\[c]` | Inserts `[c]` into the string. `[c]` can be any character (which isn't a valid escape code), but this is most useful with `"` and `\`. |
+As of now, string literals don't have any special features, like escape
+sequences, but that is subject to change.
