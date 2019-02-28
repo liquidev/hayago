@@ -218,7 +218,7 @@ class Vector {
   }
 
   // operator overloading
-  // overloaded operators cannot have a `self` argiment because they are not
+  // overloaded operators cannot have a `self` argument because they are not
   // instance methods
   fn a + b {
     return a.add(b);

@@ -91,9 +91,11 @@ proc ignore*(scan: var RodScanner): bool {.discardable.} =
     # whitespace
     if scan.peek(1)[0] in Whitespace:
       scan.next(1)
+      result = true
       continue
     # single-line comments
     if scan.peek(2) == "//":
+      result = true
       scan.next(2)
       while not scan.atEnd():
         scan.next(1)
@@ -113,7 +115,9 @@ proc ignore*(scan: var RodScanner): bool {.discardable.} =
       if scan.peek(2) == "*/":
         scan.next(2)
         nesting -= 1
-      if nesting == 0: break
+      if nesting == 0:
+        result = true
+        break
       scan.next(1)
     if nested: continue
     break
@@ -123,8 +127,13 @@ type
     emNormal, emNoIgn, emReqIgn
 
 proc expect*(scan: var RodScanner,
-             token: var RodToken, expected: varargs[RodTokenKind]): bool =
-  scan.ignore()
+             token: var RodToken, expected: varargs[RodTokenKind],
+             mode: ExpectMode): bool =
+  case mode
+  of emNormal: scan.ignore()
+  of emNoIgn: discard
+  of emReqIgn:
+    if not scan.ignore(): return false
   for exp in expected:
     let ruleResult = rules[exp](scan)
     if ruleResult.kind != rtkNone:

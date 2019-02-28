@@ -58,3 +58,11 @@ rule rnkPrefix:
   cp.compile(chunk, node.sons[0])
   chunk.emitOp(roCall)
   chunk.emitU16(chunk.sym(node.sons[1].opToken.op))
+
+rule rnkInfix:
+  for n in node.sons:
+    if n.kind == rnkOp:
+      chunk.emitOp(roCall)
+      chunk.emitU16(chunk.sym(n.opToken.op))
+    else:
+      cp.compile(chunk, n)

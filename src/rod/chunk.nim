@@ -52,21 +52,21 @@ proc readU8*(chunk: RodChunk, at: int): uint8 =
 
 proc readU16*(chunk: RodChunk, at: int): uint16 =
   result =
-    (chunk.code[at + 0] shl 8) and
-    (chunk.code[at + 1])
+    (uint16(chunk.code[at + 0]) shl 8) or
+    (uint16(chunk.code[at + 1]))
 
 proc readU32*(chunk: RodChunk, at: int): uint32 =
   result =
-    (chunk.code[at + 0] shl 24) and
-    (chunk.code[at + 1] shl 16) and
-    (chunk.code[at + 2] shl 8) and
+    (chunk.code[at + 0] shl 24) or
+    (chunk.code[at + 1] shl 16) or
+    (chunk.code[at + 2] shl 8) or
     (chunk.code[at + 3])
 
 proc readOp*(chunk: RodChunk, at: int): RodOpcode =
   RodOpcode chunk.readU8(at)
 
 proc disassemble*(chunk: RodChunk): string =
-  result.add("size: " & $chunk.code.len & " bytes")
+  result.add("chunk of size: " & $chunk.code.len & " bytes")
   var pc = 0
   while pc < chunk.code.len:
     result.add('\n')
@@ -92,7 +92,7 @@ proc `$`*(chunk: RodChunk): string =
   result.add("\nsymbols:")
   for i, s in chunk.symbols:
     result.add("\n  [" & toHex(int16 i) & "] " & s)
-  result.add("\ndisassembly:")
+  result.add("\ndisassembly:\n")
   result.add(indent(disassemble(chunk), 2))
 
 proc newChunk*(): RodChunk =

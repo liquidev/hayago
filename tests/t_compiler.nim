@@ -20,3 +20,5 @@ suite "compiler":
     testCompile(Literal, "2")
   test "prefix operations":
     testCompile(Prefix, "-5")
+  test "infix operations":
+    testCompile(Infix, "2 + 3 * 4")
