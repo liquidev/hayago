@@ -15,7 +15,7 @@ class Rod {
   }
 
   export {
-    fn(1)
+    say_hello(1)
   }
 }
 
