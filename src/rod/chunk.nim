@@ -78,9 +78,10 @@ proc disassemble*(chunk: RodChunk): string =
     of roPushConst:
       result.add($chunk.consts[chunk.readU16(pc)])
       pc += 2
-    of roCall:
+    of roPushGlobal:
       result.add($chunk.symbols[chunk.readU16(pc)])
       pc += 2
+    of roCall: discard
 
 proc `$`*(chunk: RodChunk): string =
   result.add("bytes:")

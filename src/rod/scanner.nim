@@ -12,25 +12,31 @@ type
   RodScanner* = object
     input*: string
     pos*: int
+    lastToken: RodToken
   RodTokenKind* = enum
     rtkNone
     # parenthesis and punctuation
     rtkLParen, rtkRParen
     rtkLBracket, rtkRBracket,
     rtkLBrace, rtkRBrace
+    rtkEndStmt
+    # declarations
+    rtkLet
     # types
     rtkNull, rtkBool, rtkNum, rtkStr
     # operators
-    rtkOp
+    rtkDot, rtkEq, rtkColon, rtkDColon
+    rtkOp, rtkIdent
   RodToken* = object
     case kind*: RodTokenKind
-    of rtkBool: boolVal*: bool
-    of rtkNum:  numVal*: float
-    of rtkStr:  strVal*: string
+    of rtkBool:  boolVal*: bool
+    of rtkNum:   numVal*: float
+    of rtkStr:   strVal*: string
     of rtkOp:
       op*: string
       prec*: int
       leftAssoc*: bool
+    of rtkIdent: ident*: string
     else: discard
     pos*: int
   TextPos* = tuple
@@ -41,13 +47,17 @@ type
 # Scanner
 #~~
 
+proc atEnd*(scan: RodScanner): bool =
+  scan.pos >= scan.input.len
+
 proc textPos*(scan: var RodScanner): TextPos =
   var ln, col = 0
-  for l in splitLines(scan.input[0..scan.pos]):
-    col = 0
-    for c in l:
-      col += 1
-    ln += 1
+  if not scan.atEnd():
+    for l in splitLines(scan.input[0..scan.pos]):
+      col = 0
+      for c in l:
+        col += 1
+      ln += 1
   return (ln, col)
 
 proc err*(scan: var RodScanner, msg: string) =
@@ -55,9 +65,6 @@ proc err*(scan: var RodScanner, msg: string) =
     pos = scan.textPos()
     msg = $pos.ln & ":" & $pos.col & ": " & msg
   raise newException(SyntaxError, msg)
-
-proc atEnd*(scan: RodScanner): bool =
-  scan.pos >= scan.input.len
 
 proc peek*(scan: RodScanner, amt: int): string =
   if scan.pos + amt <= scan.input.len:
@@ -127,8 +134,8 @@ type
     emNormal, emNoIgn, emReqIgn
 
 proc expect*(scan: var RodScanner,
-             token: var RodToken, expected: varargs[RodTokenKind],
-             mode: ExpectMode): bool =
+             token: var RodToken, expected: openarray[RodTokenKind],
+             mode: ExpectMode = emNormal): bool =
   case mode
   of emNormal: scan.ignore()
   of emNoIgn: discard
@@ -139,6 +146,12 @@ proc expect*(scan: var RodScanner,
     if ruleResult.kind != rtkNone:
       token = ruleResult
       return true
+
+proc expect*(scan: var RodScanner,
+             expected: openarray[RodTokenKind],
+             mode: ExpectMode = emNormal): bool =
+  var token: RodToken
+  result = scan.expect(token, expected, mode)
 
 proc peekToken*(scan: var RodScanner,
                 expected: varargs[RodTokenKind]): RodToken =
@@ -151,11 +164,15 @@ proc peekToken*(scan: var RodScanner,
       break
   scan.goto(pos)
 
+proc peekBack*(scan: var RodScanner): RodToken =
+  result = scan.lastToken
+
 template rule(tokenKind: RodTokenKind, body: untyped): untyped {.dirty.} =
   rules[tokenKind] = proc (scan: var RodScanner): RodToken {.nimcall.} =
     let pos = scan.pos
     body
     if result.kind != rtkNone:
+      scan.lastToken = result
       result.pos = pos
     else:
       scan.goto(pos)
@@ -171,6 +188,9 @@ litRule rtkLBracket, "["
 litRule rtkRBracket, "]"
 litRule rtkLBrace, "{"
 litRule rtkRBrace, "}"
+litRule rtkEndStmt, ";"
+
+litRule rtkLet, "let"
 
 litRule rtkNull, "null"
 
@@ -205,6 +225,11 @@ rule rtkStr:
     while scan.peek(1) != "\"":
       str.add(scan.consume(1))
     result = RodToken(kind: rtkStr, strVal: str)
+
+litRule rtkDot, "."
+litRule rtkEq, "="
+litRule rtkColon, ":"
+litRule rtkDColon, "::"
 
 const
   OperatorChars = {
@@ -257,8 +282,15 @@ rule rtkOp:
 
     if prec != -1:
       result = RodToken(kind: rtkOp, op: op, prec: prec, leftAssoc: leftAssoc)
-    else:
-      scan.err("Failed to determine operator's precedence")
+
+rule rtkIdent:
+  var ident = ""
+  if scan.peek(1)[0] in IdentStartChars:
+    ident.add(scan.consume(1))
+    while scan.peek(1)[0] in IdentChars:
+      ident.add(scan.consume(1))
+  if ident != "":
+    result = RodToken(kind: rtkIdent, ident: ident)
 
 proc newScanner*(text: string): RodScanner =
   result = RodScanner(

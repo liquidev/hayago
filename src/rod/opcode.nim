@@ -6,5 +6,7 @@
 
 type
   RodOpcode* = enum
-    roPushConst = "push_const"
-    roCall = "call"
+    roPushConst  = "push_const"
+    roPushGlobal = "push_global"
+    roDiscard    = "discard"
+    roCall       = "call"

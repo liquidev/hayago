@@ -22,3 +22,5 @@ suite "compiler":
     testCompile(Prefix, "-5")
   test "infix operations":
     testCompile(Infix, "2 + 3 * 4")
+  test "variables":
+    testCompile(Infix, "(a + b) * h / 2")

@@ -12,6 +12,9 @@ suite "parser":
       "Hello, World!"
     """)
     echo parseLiteral(scan)
+  test "parseVar()":
+    var scan = newScanner("""abc""")
+    echo parseVar(scan)
   test "parsePrefix()":
     var scan = newScanner("-10")
     echo parsePrefix(scan)
@@ -19,3 +22,12 @@ suite "parser":
     #var scan = newScanner("3 + 4 * 2 / (1 − 5) ^ 2 ^ 3")
     var scan = newScanner("3 + 4 * 2 / (1 - 5) ^ 2 ^ 3")
     echo parseInfix(scan)
+  test "parseLet()":
+    var scan = newScanner("let x = 2;")
+    echo parseLet(scan)
+  test "parseScript()":
+    var scan = newScanner("""
+      let x = 10;
+      let y = x + 2;
+    """)
+    echo parseScript(scan);

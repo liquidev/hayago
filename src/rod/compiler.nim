@@ -13,11 +13,28 @@ import parser
 import value
 
 #~~
+# Scopes
+#~~
+
+type
+  Local = ref object
+    name: string
+  Scope = ref object
+    locals: seq[Local]
+
+#~~
 # Compiler
 #~~
 
 type
   RodCompiler* = ref object
+    scopes: seq[Scope]
+
+proc pushScope*(cp: var RodCompiler) =
+  cp.scopes.add(Scope(locals: @[]))
+
+proc popScope*(cp: var RodCompiler) =
+  discard cp.scopes.pop()
 
 proc newCompiler*(): RodCompiler =
   RodCompiler()
@@ -54,15 +71,21 @@ rule rnkStr:
   chunk.emitOp(roPushConst)
   chunk.emitU16(chunk.id(node.strVal))
 
+rule rnkVar:
+  chunk.emitOp(roPushGlobal)
+  chunk.emitU16(chunk.sym(node[0].ident))
+
 rule rnkPrefix:
-  cp.compile(chunk, node.sons[0])
+  cp.compile(chunk, node[0])
+  chunk.emitOp(roPushGlobal)
+  chunk.emitU16(chunk.sym(node[1].opToken.op))
   chunk.emitOp(roCall)
-  chunk.emitU16(chunk.sym(node.sons[1].opToken.op))
 
 rule rnkInfix:
   for n in node.sons:
     if n.kind == rnkOp:
-      chunk.emitOp(roCall)
+      chunk.emitOp(roPushGlobal)
       chunk.emitU16(chunk.sym(n.opToken.op))
+      chunk.emitOp(roCall)
     else:
       cp.compile(chunk, n)
