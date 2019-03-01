@@ -116,6 +116,7 @@ proc ignore*(scan: var RodScanner): bool {.discardable.} =
       nesting = 0
     while not scan.atEnd():
       if scan.peek(2) == "/*":
+        result = true
         nested = true
         scan.next(2)
         nesting += 1
@@ -123,7 +124,6 @@ proc ignore*(scan: var RodScanner): bool {.discardable.} =
         scan.next(2)
         nesting -= 1
       if nesting == 0:
-        result = true
         break
       scan.next(1)
     if nested: continue

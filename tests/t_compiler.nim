@@ -24,3 +24,8 @@ suite "compiler":
     testCompile(Infix, "2 + 3 * 4")
   test "variables":
     testCompile(Infix, "(a + b) * h / 2")
+  test "scripts":
+    testCompile(Script, """
+      let x = 2;
+      let y = x * 4;
+    """)

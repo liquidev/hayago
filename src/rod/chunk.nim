@@ -81,6 +81,16 @@ proc disassemble*(chunk: RodChunk): string =
     of roPushGlobal:
       result.add($chunk.symbols[chunk.readU16(pc)])
       pc += 2
+    of roPushLocal:
+      result.add("%" & $chunk.readU16(pc))
+      pc += 2
+    of roDiscard: discard
+    of roPopGlobal:
+      result.add($chunk.symbols[chunk.readU16(pc)])
+      pc += 2
+    of roPopLocal:
+      result.add("%" & $chunk.readU16(pc))
+      pc += 2
     of roCall: discard
 
 proc `$`*(chunk: RodChunk): string =

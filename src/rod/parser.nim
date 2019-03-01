@@ -21,7 +21,7 @@ type
     #~ non-terminal nodes
     # generic
     rnkList
-    rnkScript
+    rnkScript, rnkStmt
     # operations
     rnkPrefix, rnkInfix
     rnkAssign
@@ -210,14 +210,15 @@ proc parseAssign*() {.rule.} =
     result = left
 
 proc parseLet*() {.rule.} =
-  if scan.expect([rtkLet], emReqIgn):
-    let assign = scan.parseAssign()
-    if assign[0].kind != rnkVar:
-      scan.err("Left-hand side of variable declaration must be an identifier")
-    if scan.expect([rtkEndStmt]):
-      result = node(rnkLet, assign[0], assign[1])
-    else:
-      scan.err("Semicolon ';' expected after variable declaration")
+  if scan.expect([rtkLet]):
+    if scan.ignore():
+      let assign = scan.parseAssign()
+      if assign[0].kind != rnkVar:
+        scan.err("Left-hand side of variable declaration must be an identifier")
+      if scan.expect([rtkEndStmt]):
+        result = node(rnkLet, assign[0], assign[1])
+      else:
+        scan.err("Semicolon ';' expected after variable declaration")
 
 proc parseExpr*() {.rule.} =
   result = scan.parseInfix()
@@ -227,6 +228,7 @@ proc parseStmt*() {.rule.} =
   if result:
     if not (scan.expect([rtkEndStmt]) or scan.peekBack().kind == rtkRBrace):
       scan.err("Semicolon ';' expected after expression statement")
+    result = node(rnkStmt, result)
 
 proc parseDecl*() {.rule.} =
   result = scan.parseLet()
@@ -236,4 +238,5 @@ proc parseScript*() {.rule.} =
   var nodes: seq[RodNode]
   while not scan.atEnd():
     nodes.add(scan.parseDecl())
+
   result = node(rnkScript, nodes)
