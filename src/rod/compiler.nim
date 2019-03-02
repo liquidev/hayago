@@ -76,6 +76,21 @@ proc resolveVar(cp: RodCompiler, chunk: var RodChunk,
     let globalId = chunk.sym(name)
     result = (true, globalId)
 
+proc newVar(cp: var RodCompiler, chunk: var RodChunk,
+            name: string): tuple[global: bool, id: uint16] =
+  if cp.scopes.len > 0:
+    let localId = cp.scopeOffset(cp.scope) + cp.scope.locals.len
+    return (false, uint16 localId)
+  else:
+    let globalId = chunk.sym(name)
+    result = (true, globalId)
+
+proc emitPushVar(chunk: var RodChunk, cp: RodCompiler, name: string) =
+  let rvar = cp.resolveVar(chunk, name)
+  if rvar.global: chunk.emitOp(roPushGlobal)
+  else: chunk.emitOp(roPushLocal)
+  chunk.emitU16(rvar.id)
+
 proc err(node: RodNode, msg: string) =
   let
     msg = $node.textPos.ln & ":" & $node.textPos.col & ": " & msg
@@ -120,13 +135,17 @@ rule rnkStr:
   chunk.emitU16(chunk.id(node.strVal))
 
 rule rnkVar:
-  let rvar = cp.resolveVar(chunk, node[0].ident)
-  if rvar.global: chunk.emitOp(roPushGlobal)
-  else: chunk.emitOp(roPushLocal)
-  chunk.emitU16(rvar.id)
+  chunk.emitPushVar(cp, node[0].ident)
+
+rule rnkCall:
+  for n in node[1].sons:
+    cp.compile(chunk, n)
+  cp.compile(chunk, node[0])
+  chunk.emitOp(roCall)
 
 rule rnkPrefix:
   cp.compile(chunk, node[0])
+  # TODO: classes
   chunk.emitOp(roPushGlobal)
   chunk.emitU16(chunk.sym(node[1].opToken.op))
   chunk.emitOp(roCall)
@@ -134,6 +153,7 @@ rule rnkPrefix:
 rule rnkInfix:
   for n in node.sons:
     if n.kind == rnkOp:
+      # TODO: classes again
       chunk.emitOp(roPushGlobal)
       chunk.emitU16(chunk.sym(n.opToken.op))
       chunk.emitOp(roCall)
@@ -145,7 +165,7 @@ rule rnkStmt:
   chunk.emitOp(roDiscard)
 
 rule rnkLet:
-  let rvar = cp.resolveVar(chunk, node[0][0].ident)
+  let rvar = cp.newVar(chunk, node[0][0].ident)
   cp.compile(chunk, node[1])
   if rvar.global: chunk.emitOp(roPopGlobal)
   else: chunk.emitOp(roPopLocal)

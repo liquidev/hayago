@@ -28,4 +28,5 @@ suite "compiler":
     testCompile(Script, """
       let x = 2;
       let y = x * 4;
+      y + 3;
     """)

@@ -15,6 +15,9 @@ suite "parser":
   test "parseVar()":
     var scan = newScanner("""abc""")
     echo parseVar(scan)
+  test "parseCall()":
+    var scan = newScanner("fun(42)");
+    echo parsePrefix(scan)
   test "parsePrefix()":
     var scan = newScanner("-10")
     echo parsePrefix(scan)
@@ -29,5 +32,7 @@ suite "parser":
     var scan = newScanner("""
       let x = 10;
       let y = x + 2;
+      print(x);
+      curry(x)(y);
     """)
     echo parseScript(scan);

@@ -19,7 +19,7 @@ type
     rtkLParen, rtkRParen
     rtkLBracket, rtkRBracket,
     rtkLBrace, rtkRBrace
-    rtkEndStmt
+    rtkComma, rtkEndStmt
     # declarations
     rtkLet
     # types
@@ -188,6 +188,8 @@ litRule rtkLBracket, "["
 litRule rtkRBracket, "]"
 litRule rtkLBrace, "{"
 litRule rtkRBrace, "}"
+
+litRule rtkComma, ","
 litRule rtkEndStmt, ";"
 
 litRule rtkLet, "let"

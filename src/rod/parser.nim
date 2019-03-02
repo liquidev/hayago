@@ -25,6 +25,7 @@ type
     # operations
     rnkPrefix, rnkInfix
     rnkAssign
+    rnkCall
     # variables
     rnkVar
     # declarations
@@ -154,16 +155,30 @@ proc parseAtom*() {.rule.} =
       if not scan.expect([rtkRParen]):
         scan.err("Missing right paren ')'")
 
+proc parseCall*(left: RodNode) {.rule.} =
+  if scan.expect([rtkLParen]):
+    var args: seq[RodNode]
+    while not scan.atEnd():
+      args.add(scan.parseExpr())
+      if not scan.expect([rtkComma]):
+        break
+    if scan.expect([rtkRParen]):
+      result = scan.parseCall(node(rnkCall, left, node(rnkList, args)))
+    else:
+      scan.err("Missing right paren ')'")
+  else:
+    result = left
+
 proc parsePrefix*() {.rule.} =
   var opToken: RodToken
   if scan.expect(opToken, [rtkOp]):
     if not scan.ignore():
       let
         opNode = opNode(opToken)
-        rightNode = scan.parseAtom()
+        rightNode = scan.parseCall(scan.parseAtom())
       result = node(rnkPrefix, rightNode, opNode)
   else:
-    result = scan.parseAtom()
+    result = scan.parseCall(scan.parseAtom())
 
 proc parseInfix*() {.rule.} =
   ## Infix operations are parsed to reverse Polish notation using the
