@@ -23,6 +23,7 @@ Rod::say_hello("world")
 ```
 
 | **Note** | rod is not finished yet. This readme is a draft of the language's goals. |
+| --- | --- |
 
 ### Features
  - **A fast VM.** rod uses a small, yet efficient instruction set for its VM,
