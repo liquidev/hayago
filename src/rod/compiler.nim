@@ -63,14 +63,13 @@ proc resolveVar(cp: RodCompiler, chunk: var RodChunk,
       found = false
     for sc in cp.scopes:
       let scopeOffset = cp.scopeOffset(sc)
-      for j, loc in sc.locals:
+      for i, loc in sc.locals:
         if loc.name == name:
           found = true
-          localId = scopeOffset + j
+          localId = scopeOffset + i
     if not found:
-      let scopeOffset = cp.scopeOffset(cp.scope)
-      localId = scopeOffset + cp.scope.locals.len
-      cp.scope.locals.add(Local(name: name))
+      let globalId = chunk.sym(name)
+      result = (true, globalId)
     result = (false, uint16 localId)
   else:
     let globalId = chunk.sym(name)
@@ -80,6 +79,7 @@ proc newVar(cp: var RodCompiler, chunk: var RodChunk,
             name: string): tuple[global: bool, id: uint16] =
   if cp.scopes.len > 0:
     let localId = cp.scopeOffset(cp.scope) + cp.scope.locals.len
+    cp.scope.locals.add(Local(name: name))
     return (false, uint16 localId)
   else:
     let globalId = chunk.sym(name)
@@ -142,13 +142,14 @@ rule rnkCall:
     cp.compile(chunk, n)
   cp.compile(chunk, node[0])
   chunk.emitOp(roCall)
+  chunk.emitU8(uint8 node[1].sons.len)
 
 rule rnkPrefix:
   cp.compile(chunk, node[0])
-  # TODO: classes
-  chunk.emitOp(roPushGlobal)
+  chunk.emitOp(roPushMethod)
   chunk.emitU16(chunk.sym(node[1].opToken.op))
   chunk.emitOp(roCall)
+  chunk.emitU8(1)
 
 rule rnkInfix:
   for n in node.sons:
@@ -157,6 +158,7 @@ rule rnkInfix:
       chunk.emitOp(roPushGlobal)
       chunk.emitU16(chunk.sym(n.opToken.op))
       chunk.emitOp(roCall)
+      chunk.emitU8(2)
     else:
       cp.compile(chunk, n)
 
@@ -165,11 +167,18 @@ rule rnkStmt:
   chunk.emitOp(roDiscard)
 
 rule rnkLet:
-  let rvar = cp.newVar(chunk, node[0][0].ident)
-  cp.compile(chunk, node[1])
-  if rvar.global: chunk.emitOp(roPopGlobal)
-  else: chunk.emitOp(roPopLocal)
-  chunk.emitU16(rvar.id)
+  for a in node.sons:
+    let rvar = cp.newVar(chunk, a[0][0].ident)
+    cp.compile(chunk, a[1])
+    if rvar.global: chunk.emitOp(roPopGlobal)
+    else: chunk.emitOp(roPopLocal)
+    chunk.emitU16(rvar.id)
+
+rule rnkBlock:
+  cp.pushScope()
+  for n in node.sons:
+    cp.compile(chunk, n)
+  cp.popScope()
 
 rule rnkScript:
   for n in node.sons:

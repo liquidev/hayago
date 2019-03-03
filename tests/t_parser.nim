@@ -26,8 +26,17 @@ suite "parser":
     var scan = newScanner("3 + 4 * 2 / (1 - 5) ^ 2 ^ 3")
     echo parseInfix(scan)
   test "parseLet()":
-    var scan = newScanner("let x = 2;")
+    var scan = newScanner("""
+      let x = 2, y = 3;""")
     echo parseLet(scan)
+  test "parseBlock()":
+    var scan = newScanner("""
+      {
+        let x = 2 * 4;
+        x / 3;
+      }
+    """)
+    echo parseBlock(scan)
   test "parseScript()":
     var scan = newScanner("""
       let x = 10;
@@ -35,4 +44,4 @@ suite "parser":
       print(x);
       curry(x)(y);
     """)
-    echo parseScript(scan);
+    echo parseScript(scan)

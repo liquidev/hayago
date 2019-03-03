@@ -27,6 +27,9 @@ proc sym*(chunk: var RodChunk, val: string): uint16 =
   result = uint16 chunk.symbols.len
   chunk.symbols.add(val)
 
+proc hasSym*(chunk: RodChunk, val: string): bool =
+  val in chunk.symbols
+
 proc emitU8*(chunk: var RodChunk, val: uint8) =
   chunk.code.add(val)
 
@@ -57,10 +60,10 @@ proc readU16*(chunk: RodChunk, at: int): uint16 =
 
 proc readU32*(chunk: RodChunk, at: int): uint32 =
   result =
-    (chunk.code[at + 0] shl 24) or
-    (chunk.code[at + 1] shl 16) or
-    (chunk.code[at + 2] shl 8) or
-    (chunk.code[at + 3])
+    (uint16(chunk.code[at + 0]) shl 24) or
+    (uint16(chunk.code[at + 1]) shl 16) or
+    (uint16(chunk.code[at + 2]) shl 8) or
+    (uint16(chunk.code[at + 3]))
 
 proc readOp*(chunk: RodChunk, at: int): RodOpcode =
   RodOpcode chunk.readU8(at)
@@ -72,26 +75,23 @@ proc disassemble*(chunk: RodChunk): string =
     result.add('\n')
     result.add(toHex(uint32 pc))
     let opcode = RodOpcode chunk.code[pc]
-    result.add(" " & align($opcode, 16) & " ")
+    result.add(" " & align($opcode, 12) & " ")
     pc += 1
     case opcode
     of roPushConst:
       result.add($chunk.consts[chunk.readU16(pc)])
       pc += 2
-    of roPushGlobal:
+    of roPushGlobal, roPopGlobal,
+       roPushMethod, roMethod:
       result.add($chunk.symbols[chunk.readU16(pc)])
       pc += 2
-    of roPushLocal:
+    of roPushLocal, roPopLocal:
       result.add("%" & $chunk.readU16(pc))
       pc += 2
+    of roCall:
+      result.add($chunk.readU8(pc))
+      pc += 1
     of roDiscard: discard
-    of roPopGlobal:
-      result.add($chunk.symbols[chunk.readU16(pc)])
-      pc += 2
-    of roPopLocal:
-      result.add("%" & $chunk.readU16(pc))
-      pc += 2
-    of roCall: discard
 
 proc `$`*(chunk: RodChunk): string =
   result.add("bytes:")

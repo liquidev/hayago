@@ -21,7 +21,7 @@ type
     #~ non-terminal nodes
     # generic
     rnkList
-    rnkScript, rnkStmt
+    rnkScript, rnkBlock, rnkStmt
     # operations
     rnkPrefix, rnkInfix
     rnkAssign
@@ -193,7 +193,7 @@ proc parseInfix*() {.rule.} =
     nextAtom: RodNode
     nextOp: RodToken
     wasOp: bool
-  while true: # nim devs, add `do...while`, please. `while true` looks scary!
+  while true:
     if not wasOp and scan.expect(nextOp, [rtkOp]):
       while opStack.len > 0 and
             (nextOp.leftAssoc and nextOp.prec <= opStack.peekLast().prec or
@@ -227,16 +227,34 @@ proc parseAssign*() {.rule.} =
 proc parseLet*() {.rule.} =
   if scan.expect([rtkLet]):
     if scan.ignore():
-      let assign = scan.parseAssign()
-      if assign[0].kind != rnkVar:
-        scan.err("Left-hand side of variable declaration must be an identifier")
+      var assignments: seq[RodNode]
+      while true:
+        let assign = scan.parseAssign()
+        var left, right: RodNode
+        if assign.kind != rnkNone:
+          if assign.kind == rnkVar:
+            left = assign
+            right = nullNode()
+          elif assign.kind == rnkAssign:
+            if assign[0].kind != rnkVar:
+              scan.err(
+                "Left-hand side of variable assignment must be an identifier")
+            left = assign[0]
+            right = assign[1]
+          else:
+            scan.err("Identifier expected")
+        assignments.add(node(rnkAssign, left, right))
+        if not scan.expect([rtkComma]):
+          break
       if scan.expect([rtkEndStmt]):
-        result = node(rnkLet, assign[0], assign[1])
+        result = node(rnkLet, assignments)
       else:
         scan.err("Semicolon ';' expected after variable declaration")
 
 proc parseExpr*() {.rule.} =
   result = scan.parseInfix()
+
+proc parseBlock*() {.rule.}
 
 proc parseStmt*() {.rule.} =
   result = scan.parseExpr()
@@ -244,10 +262,21 @@ proc parseStmt*() {.rule.} =
     if not (scan.expect([rtkEndStmt]) or scan.peekBack().kind == rtkRBrace):
       scan.err("Semicolon ';' expected after expression statement")
     result = node(rnkStmt, result)
+  if not result: result = scan.parseBlock()
 
 proc parseDecl*() {.rule.} =
   result = scan.parseLet()
   if not result: result = scan.parseStmt()
+
+proc parseBlock*() {.rule.} =
+  if scan.expect([rtkLBrace]):
+    var nodes: seq[RodNode]
+    while not (scan.expect([rtkRBrace])):
+      let decl = scan.parseDecl()
+      nodes.add(decl)
+      if scan.atEnd():
+        scan.err("Missing right brace '}'")
+    result = node(rnkBlock, nodes)
 
 proc parseScript*() {.rule.} =
   var nodes: seq[RodNode]

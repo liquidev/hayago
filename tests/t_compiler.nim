@@ -26,7 +26,5 @@ suite "compiler":
     testCompile(Infix, "(a + b) * h / 2")
   test "scripts":
     testCompile(Script, """
-      let x = 2;
-      let y = x * 4;
-      y + 3;
+      print(2 + 2);
     """)
