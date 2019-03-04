@@ -24,7 +24,7 @@ suite "parser":
   test "parseInfix()":
     #var scan = newScanner("3 + 4 * 2 / (1 − 5) ^ 2 ^ 3")
     var scan = newScanner("3 + 4 * 2 / (1 - 5) ^ 2 ^ 3")
-    echo parseInfix(scan)
+    echo `$`(parseExpr(scan, 0), false)
   test "parseLet()":
     var scan = newScanner("""
       let x = 2, y = 3;""")

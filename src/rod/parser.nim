@@ -67,7 +67,7 @@ proc `$`*(node: RodNode, pretty: bool = true): string =
           result.add(stringified)
       else:
         result.add(" ")
-        result.add($node)
+        result.add(`$`(node, pretty))
     result.add(")")
 
 proc `[]`*(node: RodNode, index: int): RodNode =
@@ -143,7 +143,7 @@ proc parseVar*() {.rule.} =
   if scan.expect(identToken, [rtkIdent]):
     result = node(rnkVar, identNode(identToken.ident))
 
-proc parseExpr*() {.rule.}
+proc parseExpr*(prec: int) {.rule.}
 
 proc parseAtom*() {.rule.} =
   result = node(rnkNone)
@@ -151,7 +151,7 @@ proc parseAtom*() {.rule.} =
   if not result: result = scan.parseVar()
   if not result:
     if scan.expect([rtkLParen]):
-      result = scan.parseExpr()
+      result = scan.parseExpr(0)
       if not scan.expect([rtkRParen]):
         scan.err("Missing right paren ')'")
 
@@ -159,7 +159,7 @@ proc parseCall*(left: RodNode) {.rule.} =
   if scan.expect([rtkLParen]):
     var args: seq[RodNode]
     while not scan.atEnd():
-      args.add(scan.parseExpr())
+      args.add(scan.parseExpr(0))
       if not scan.expect([rtkComma]):
         break
     if scan.expect([rtkRParen]):
@@ -180,51 +180,41 @@ proc parsePrefix*() {.rule.} =
   else:
     result = scan.parseCall(scan.parseAtom())
 
-proc parseInfix*() {.rule.} =
-  ## Infix operations are parsed to reverse Polish notation using the
-  ## shunting-yard algorithm. Read more at:
-  ## https://en.wikipedia.org/wiki/Shunting-yard_algorithm
-  ## This implementation is largely simplified, as the rest of the recursive
-  ## descent parser already does its job with parsing function calls and
-  ## parenthesized expressions.
-  var
-    queue = @[scan.parsePrefix()]
-    opStack = initDeque[RodToken]()
-    nextAtom: RodNode
-    nextOp: RodToken
-    wasOp: bool
-  while true:
-    if not wasOp and scan.expect(nextOp, [rtkOp]):
-      while opStack.len > 0 and
-            (nextOp.leftAssoc and nextOp.prec <= opStack.peekLast().prec or
-             not nextOp.leftAssoc and nextOp.prec < opStack.peekLast().prec):
-        queue.add(opNode(opStack.popLast()))
-      opStack.addLast(nextOp)
-      wasOp = true
-      continue
-    wasOp = false
-    nextAtom = scan.parsePrefix() # I know, I said atom, excuse that
-    if nextAtom.kind != rnkNone:
-      queue.add(nextAtom)
-      continue
-    break
-  while opStack.len > 0:
-    queue.add(opNode(opStack.popLast()))
-  if queue.len == 0: result = node(rnkNone)
-  elif queue.len == 1: result = queue[0]
-  else:
-    result = node(rnkInfix, queue)
+# I can't believe how Pratt parsing can be done in this few lines of code.
+# https://gist.github.com/liquid600pgm/5d0673f40223a312cc5f91e969660060#parsing
+# This gist contains some useful programming resources.
+# Check out the 'Pratt parsing' link here for some insights on how it can be
+# implemented.
+
+proc parseInfix*(left: RodNode, op: RodToken) {.rule.} =
+  let right = scan.parseExpr(op.prec - (1 - ord(op.leftAssoc)))
+  result = node(rnkInfix, left, opNode(op), right)
+
+proc parseExpr*(prec: int) {.rule.} =
+  var op: RodToken
+  result = scan.parsePrefix()
+  op = scan.peekToken(rtkOp)
+  let nextPrec =
+    if op.kind == rtkOp: op.prec
+    else: 0
+  while prec < nextPrec:
+    op = scan.nextToken(rtkOp)
+    if op.kind == rtkOp:
+      result = scan.parseInfix(result, op)
+    else:
+      break
 
 proc parseAssign*() {.rule.} =
-  let left = scan.parseExpr()
+  let left = scan.parseExpr(0)
   if scan.expect([rtkEq]):
-    let right = scan.parseExpr()
+    let right = scan.parseExpr(0)
     if right.kind != rnkNone:
       result = node(rnkAssign, left, right)
   else:
     result = left
 
 proc parseLet*() {.rule.} =
+  # ahh, variable declarations. so simple yet so complex
   if scan.expect([rtkLet]):
     if scan.ignore():
       var assignments: seq[RodNode]
@@ -251,13 +241,10 @@ proc parseLet*() {.rule.} =
       else:
         scan.err("Semicolon ';' expected after variable declaration")
 
-proc parseExpr*() {.rule.} =
-  result = scan.parseInfix()
-
 proc parseBlock*() {.rule.}
 
 proc parseStmt*() {.rule.} =
-  result = scan.parseExpr()
+  result = scan.parseExpr(0)
   if result:
     if not (scan.expect([rtkEndStmt]) or scan.peekBack().kind == rtkRBrace):
       scan.err("Semicolon ';' expected after expression statement")

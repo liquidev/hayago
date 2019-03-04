@@ -167,6 +167,11 @@ proc peekToken*(scan: var RodScanner,
 proc peekBack*(scan: var RodScanner): RodToken =
   result = scan.lastToken
 
+proc nextToken*(scan: var RodScanner,
+                expected: varargs[RodTokenKind]): RodToken =
+  if scan.expect(result, expected):
+    discard
+
 template rule(tokenKind: RodTokenKind, body: untyped): untyped {.dirty.} =
   rules[tokenKind] = proc (scan: var RodScanner): RodToken {.nimcall.} =
     let pos = scan.pos
