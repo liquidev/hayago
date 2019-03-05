@@ -19,4 +19,5 @@ type
     # while ``method`` does.
     roPushMethod = "push_method"
     roMethod     = "method"
-    roCall       = "call"
+    roCallFn     = "call_fn"
+    roCallMethod = "call_method"

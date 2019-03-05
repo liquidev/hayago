@@ -145,13 +145,16 @@ proc parseVar*() {.rule.} =
 
 proc parseExpr*(prec: int) {.rule.}
 
+proc parseExpr*() {.rule.} =
+  result = scan.parseExpr(0)
+
 proc parseAtom*() {.rule.} =
   result = node(rnkNone)
   result = scan.parseLiteral()
   if not result: result = scan.parseVar()
   if not result:
     if scan.expect([rtkLParen]):
-      result = scan.parseExpr(0)
+      result = scan.parseExpr()
       if not scan.expect([rtkRParen]):
         scan.err("Missing right paren ')'")
 
@@ -159,7 +162,7 @@ proc parseCall*(left: RodNode) {.rule.} =
   if scan.expect([rtkLParen]):
     var args: seq[RodNode]
     while not scan.atEnd():
-      args.add(scan.parseExpr(0))
+      args.add(scan.parseExpr())
       if not scan.expect([rtkComma]):
         break
     if scan.expect([rtkRParen]):
@@ -205,9 +208,9 @@ proc parseExpr*(prec: int) {.rule.} =
       break
 
 proc parseAssign*() {.rule.} =
-  let left = scan.parseExpr(0)
+  let left = scan.parseExpr()
   if scan.expect([rtkEq]):
-    let right = scan.parseExpr(0)
+    let right = scan.parseExpr()
     if right.kind != rnkNone:
       result = node(rnkAssign, left, right)
   else:
@@ -244,7 +247,7 @@ proc parseLet*() {.rule.} =
 proc parseBlock*() {.rule.}
 
 proc parseStmt*() {.rule.} =
-  result = scan.parseExpr(0)
+  result = scan.parseExpr()
   if result:
     if not (scan.expect([rtkEndStmt]) or scan.peekBack().kind == rtkRBrace):
       scan.err("Semicolon ';' expected after expression statement")

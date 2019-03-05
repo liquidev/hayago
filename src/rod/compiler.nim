@@ -45,16 +45,6 @@ proc scopeOffset(cp: RodCompiler, scope: Scope): int =
 proc popScope(cp: var RodCompiler) =
   discard cp.scopes.pop()
 
-proc isVar(cp: RodCompiler, chunk: RodChunk,
-           name: string): bool =
-  if cp.scopes.len > 0:
-    for sc in cp.scopes:
-      for loc in sc.locals:
-        if loc.name == name:
-          return true
-  else:
-    return name in chunk.symbols
-
 proc resolveVar(cp: RodCompiler, chunk: var RodChunk,
                 name: string): tuple[global: bool, id: uint16] =
   if cp.scopes.len > 0:
@@ -107,7 +97,11 @@ var rules: array[low(RodNodeKind)..high(RodNodeKind),
   proc (cp: var RodCompiler, chunk: var RodChunk, node: RodNode) {.nimcall.}]
 
 proc compile*(cp: var RodCompiler, chunk: var RodChunk, node: RodNode) =
+  echo "compiling ", node.kind, " at ", node.textPos
+  let oldPos = chunk.currentPos
+  chunk.currentPos = node.textPos
   rules[node.kind](cp, chunk, node)
+  chunk.currentPos = oldPos
 
 template rule(nodeKind: RodNodeKind, body: untyped) {.dirty.} =
   rules[nodeKind] =
@@ -141,26 +135,23 @@ rule rnkCall:
   for n in node[1].sons:
     cp.compile(chunk, n)
   cp.compile(chunk, node[0])
-  chunk.emitOp(roCall)
+  chunk.emitOp(roCallFn)
   chunk.emitU8(uint8 node[1].sons.len)
 
 rule rnkPrefix:
   cp.compile(chunk, node[0])
   chunk.emitOp(roPushMethod)
   chunk.emitU16(chunk.sym(node[1].opToken.op))
-  chunk.emitOp(roCall)
-  chunk.emitU8(1)
+  chunk.emitOp(roCallMethod)
+  chunk.emitU8(0)
 
 rule rnkInfix:
-  for n in node.sons:
-    if n.kind == rnkOp:
-      # TODO: classes again
-      chunk.emitOp(roPushGlobal)
-      chunk.emitU16(chunk.sym(n.opToken.op))
-      chunk.emitOp(roCall)
-      chunk.emitU8(2)
-    else:
-      cp.compile(chunk, n)
+  cp.compile(chunk, node[0])
+  chunk.emitOp(roPushMethod)
+  chunk.emitU16(chunk.sym(node[1].opToken.op))
+  cp.compile(chunk, node[2])
+  chunk.emitOp(roCallMethod)
+  chunk.emitU8(1)
 
 rule rnkStmt:
   cp.compile(chunk, node[0])

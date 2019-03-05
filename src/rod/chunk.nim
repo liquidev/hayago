@@ -6,14 +6,18 @@
 
 import strutils
 
+import scanner
 import opcode
 import value
 
 type
-  RodChunk* = ref object
+  RodChunk* {.package.} = ref object
     code*: seq[uint8]
     consts*: seq[RodValue]
     symbols*: seq[string]
+    lines*: seq[tuple[pos: TextPos, len: int]]
+    # compile-time state
+    currentPos*: TextPos
 
 proc id*(chunk: var RodChunk, val: RodValue): uint16 =
   for i, c in chunk.consts:
@@ -30,16 +34,22 @@ proc sym*(chunk: var RodChunk, val: string): uint16 =
 proc hasSym*(chunk: RodChunk, val: string): bool =
   val in chunk.symbols
 
+proc emit(chunk: var RodChunk, n: int) =
+  chunk.lines.add((chunk.currentPos, n))
+
 proc emitU8*(chunk: var RodChunk, val: uint8) =
+  chunk.emit(1)
   chunk.code.add(val)
 
 proc emitU16*(chunk: var RodChunk, val: uint16) =
+  chunk.emit(2)
   chunk.code.add([
     uint8((val and 0xff00'u16) shr 8),
     uint8((val and 0x00ff'u16))
   ])
 
 proc emitU32*(chunk: var RodChunk, val: uint32) =
+  chunk.emit(4)
   chunk.code.add([
     uint8((val and 0xff000000'u32) shr 24),
     uint8((val and 0x00ff0000'u32) shr 16),
@@ -68,12 +78,29 @@ proc readU32*(chunk: RodChunk, at: int): uint32 =
 proc readOp*(chunk: RodChunk, at: int): RodOpcode =
   RodOpcode chunk.readU8(at)
 
+proc posOf*(chunk: RodChunk, pc: int): TextPos =
+  var i = 0
+  for l in chunk.lines:
+    if i >= pc:
+      return l.pos
+    i += l.len
+
 proc disassemble*(chunk: RodChunk): string =
   result.add("chunk of size: " & $chunk.code.len & " bytes")
-  var pc = 0
+  var
+    pc = 0
+    line = -1
   while pc < chunk.code.len:
     result.add('\n')
     result.add(toHex(uint32 pc))
+
+    let currentLine = chunk.posOf(pc).ln
+    if currentLine == line:
+      result.add("   |")
+    else:
+      result.add(" " & align($currentLine, 3))
+    line = currentLine
+
     let opcode = RodOpcode chunk.code[pc]
     result.add(" " & align($opcode, 12) & " ")
     pc += 1
@@ -88,7 +115,7 @@ proc disassemble*(chunk: RodChunk): string =
     of roPushLocal, roPopLocal:
       result.add("%" & $chunk.readU16(pc))
       pc += 2
-    of roCall:
+    of roCallFn, roCallMethod:
       result.add($chunk.readU8(pc))
       pc += 1
     of roDiscard: discard
