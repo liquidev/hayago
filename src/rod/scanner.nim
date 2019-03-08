@@ -231,6 +231,7 @@ rule rtkStr:
     var str = ""
     while scan.peek(1) != "\"":
       str.add(scan.consume(1))
+    scan.next(1)
     result = RodToken(kind: rtkStr, strVal: str)
 
 litRule rtkDot, "."

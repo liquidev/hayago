@@ -57,13 +57,10 @@ proc resolveVar(cp: RodCompiler, chunk: var RodChunk,
         if loc.name == name:
           found = true
           localId = scopeOffset + i
-    if not found:
-      let globalId = chunk.sym(name)
-      result = (true, globalId)
-    result = (false, uint16 localId)
-  else:
-    let globalId = chunk.sym(name)
-    result = (true, globalId)
+    if found:
+      return (false, uint16 localId)
+  let globalId = chunk.sym(name)
+  result = (true, globalId)
 
 proc newVar(cp: var RodCompiler, chunk: var RodChunk,
             name: string): tuple[global: bool, id: uint16] =
@@ -97,7 +94,6 @@ var rules: array[low(RodNodeKind)..high(RodNodeKind),
   proc (cp: var RodCompiler, chunk: var RodChunk, node: RodNode) {.nimcall.}]
 
 proc compile*(cp: var RodCompiler, chunk: var RodChunk, node: RodNode) =
-  echo "compiling ", node.kind, " at ", node.textPos
   let oldPos = chunk.currentPos
   chunk.currentPos = node.textPos
   rules[node.kind](cp, chunk, node)
@@ -159,8 +155,8 @@ rule rnkStmt:
 
 rule rnkLet:
   for a in node.sons:
-    let rvar = cp.newVar(chunk, a[0][0].ident)
     cp.compile(chunk, a[1])
+    let rvar = cp.newVar(chunk, a[0][0].ident)
     if rvar.global: chunk.emitOp(roPopGlobal)
     else: chunk.emitOp(roPopLocal)
     chunk.emitU16(rvar.id)
@@ -174,3 +170,4 @@ rule rnkBlock:
 rule rnkScript:
   for n in node.sons:
     cp.compile(chunk, n)
+  chunk.emitOp(roReturn)

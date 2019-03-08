@@ -106,10 +106,10 @@ proc disassemble*(chunk: RodChunk): string =
     pc += 1
     case opcode
     of roPushConst:
-      result.add($chunk.consts[chunk.readU16(pc)])
+      result.add($+chunk.consts[chunk.readU16(pc)])
       pc += 2
     of roPushGlobal, roPopGlobal,
-       roPushMethod, roMethod:
+       roPushMethod:
       result.add($chunk.symbols[chunk.readU16(pc)])
       pc += 2
     of roPushLocal, roPopLocal:
@@ -118,7 +118,7 @@ proc disassemble*(chunk: RodChunk): string =
     of roCallFn, roCallMethod:
       result.add($chunk.readU8(pc))
       pc += 1
-    of roDiscard: discard
+    of roDiscard, roReturn: discard
 
 proc `$`*(chunk: RodChunk): string =
   result.add("bytes:")
