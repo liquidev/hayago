@@ -26,5 +26,5 @@ template testRun*(input: string): untyped =
 suite "VM":
   test "calls":
     testRun("""
-      println("Hello, World!");
+      println(2 + 2);
     """)

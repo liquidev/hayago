@@ -1,6 +1,6 @@
 #~~
 # the rod programming language
-# copyright (C) iLiquid, 2018
+# copyright (C) iLiquid, 2019
 # licensed under the MIT license
 #~~
 

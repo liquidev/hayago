@@ -1,6 +1,6 @@
 #~~
 # the rod programming language
-# copyright (C) iLiquid, 2018
+# copyright (C) iLiquid, 2019
 # licensed under the MIT license
 #~~
 
@@ -106,11 +106,11 @@ proc disassemble*(chunk: RodChunk): string =
     pc += 1
     case opcode
     of roPushConst:
-      result.add($+chunk.consts[chunk.readU16(pc)])
+      result.add($+chunk.consts[int chunk.readU16(pc)])
       pc += 2
     of roPushGlobal, roPopGlobal,
        roPushMethod:
-      result.add($chunk.symbols[chunk.readU16(pc)])
+      result.add($chunk.symbols[int chunk.readU16(pc)])
       pc += 2
     of roPushLocal, roPopLocal:
       result.add("%" & $chunk.readU16(pc))

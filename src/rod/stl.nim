@@ -1,6 +1,6 @@
 #~~
 # the rod programming language
-# copyright (C) iLiquid, 2018
+# copyright (C) iLiquid, 2019
 # licensed under the MIT license
 #~~
 
@@ -26,5 +26,18 @@ proc println(vm: var RodVM, env: var RodEnv) =
       print.add(' ')
   echo print
 
+proc numType(vm: var RodVM, env: var RodEnv) =
+  var numT = newClass("Num")
+  numT.addMethod("+") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal + vm[1].numVal
+  numT.addMethod("-") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal - vm[1].numVal
+  numT.addMethod("*") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal * vm[1].numVal
+  numT.addMethod("/") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal / vm[1].numVal
+  env["Num"] = newObject(numT)
+
 stl[rsBase] = proc (vm: var RodVM, env: var RodEnv) =
   env["println"] = println
+  numType(vm, env)

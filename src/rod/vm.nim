@@ -1,6 +1,6 @@
 #~~
 # the rod programming language
-# copyright (C) iLiquid, 2018
+# copyright (C) iLiquid, 2019
 # licensed under the MIT license
 #~~
 
@@ -14,6 +14,9 @@ type
   RodForeignProc* = proc (vm: var RodVM, env: var RodEnv) {.nimcall.}
   RodForeignFn* = ref object of RodBaseFn
     impl*: RodForeignProc
+  RodCtorFn* = ref object of RodBaseFn
+    class*: RodClass
+    ctor*: RodBaseFn
 
   RodEnv* = ref object
     globals: TableRef[string, RodValue]
@@ -76,25 +79,45 @@ proc readU32(call: var Call): uint32 =
   result = call.chunk.readU32(call.pc)
   call.pc += sizeof(result)
 
+proc initCall(env: RodEnv): Call =
+  Call(
+    env: env,
+    isModMain: false,
+    isForeign: false
+  )
+
+proc modMain(call: Call): Call =
+  result = call
+  result.isModMain = true
+
+proc foreign(call: Call): Call =
+  result = call
+  result.isForeign = true
+
+proc setFn(call: Call, fn: RodBaseFn): Call =
+  result = call
+  result.fn = fn
+
+proc setChunk(call: Call, chunk: RodChunk): Call =
+  result = call
+  result.chunk = chunk
+
 #~~
 # Functions
 #~~
 
-# I really want this section to stay right there while still having access to
-# some VM functions, that's why that proc has a forwarded declaration here
-proc err*(vm: RodVM, exc: typedesc, msg: string)
+proc newCtorFn*(class: RodClass, fn: RodBaseFn): RodCtorFn =
+  result = RodCtorFn(
+    class: class,
+    ctor: fn
+  )
 
-proc enterCall(vm: var RodVM, call: Call)
+proc `[]=`*(env: var RodEnv, global: string, class: RodClass) =
+  env.globals[global] = newCtorFn(class, RodBaseFn())
 
-proc exitCall(vm: var RodVM)
+method doCall*(fn: RodBaseFn, vm: var RodVM) {.base.}
 
-proc currentCall(vm: RodVM): Call
-
-method doCall*(fn: RodBaseFn, vm: var RodVM) {.base.} =
-  vm.err(TypeError, "doCall() is not implemented for " & $type(fn))
-
-method doCall*(fn: RodForeignFn, vm: var RodVM) =
-  fn.impl(vm, vm.currentCall.env)
+method doCall*(fn: RodForeignFn, vm: var RodVM)
 
 #~~
 # VM
@@ -139,9 +162,11 @@ proc popSeq(vm: var RodVM, arity: int): seq[RodValue] =
 proc slotAmt*(vm: RodVM): int =
   vm.slots.len
 
-proc ensureSlots*(vm: var RodVM, slots: int) =
-  if vm.slots.len < slots:
-    vm.slots.setLen(slots)
+proc makeSlots*(vm: var RodVM, slots: int) =
+  vm.slots.setLen(slots)
+
+proc clearSlots*(vm: var RodVM) =
+  vm.slots.setLen(0)
 
 iterator slots*(vm: var RodVM): (int, var RodValue) =
   var i = 0
@@ -167,35 +192,61 @@ proc runCall(vm: var RodVM): RodValue =
     case op
     # values and variables
     of roPushConst:
-      vm.push(chunk.consts[call.readU16()])
+      vm.push(chunk.consts[int call.readU16()])
     of roPushGlobal:
-      let name = chunk.symbols[call.readU16()]
+      let name = chunk.symbols[int call.readU16()]
       if call.env.globals.hasKey(name):
         vm.push(call.env[name])
       else:
         vm.push(RodNull)
     of roPushLocal:
-      vm.push(vm.locals[call.readU16()])
+      vm.push(vm.locals[int call.readU16()])
+
     of roDiscard:
       discard vm.pop()
     of roPopGlobal:
-      call.env[chunk.symbols[call.readU16()]] = vm.pop()
+      call.env[chunk.symbols[int call.readU16()]] = vm.pop()
     of roPopLocal:
       let id = int call.readU16()
       if id <= vm.locals.len:
         vm.locals.setLen(id)
       vm.locals[id] = vm.pop()
 
-    # calls
+    # functions, methods and calls
+    of roPushMethod:
+      let
+        receiver = vm.peek()
+        name = chunk.symbols[int call.readU16()]
+      var class: RodClass
+      if receiver.kind == rvkObj: class = receiver.objVal.class
+      else: class = call.env[receiver.className()].objVal.class
+      if class.methods.hasKey(name):
+        vm.push(class.methods[name])
+      else:
+        vm.err(TypeError, class.name & " doesn't implement " & name & "()")
     of roCallFn:
+      vm.clearSlots()
       let fn = vm.pop()
-      vm.slots.add(RodNull)
+      vm.makeSlots(1)
+      vm.slots[0] = RodNull
       vm.slots.add(vm.popSeq(int call.readU8()))
       if fn.kind == rvkFn:
         fn.fnVal.doCall(vm)
       else:
         vm.err(TypeError, $fn & " is not a function")
-      vm.push(vm[0])
+    of roCallMethod:
+      vm.clearSlots()
+      vm.makeSlots(1)
+      vm.slots[0] = RodNull
+      vm.slots.add(vm.popSeq(int call.readU8()))
+      let
+        fn = vm.pop()
+        receiver = vm.pop()
+      vm.slots[0] = receiver
+      if fn.kind == rvkFn:
+        fn.fnVal.doCall(vm)
+      else:
+        vm.err(TypeError, $fn & " is not a function")
 
     # flow control
     of roReturn:
@@ -203,16 +254,11 @@ proc runCall(vm: var RodVM): RodValue =
         return vm.pop()
       else:
         return RodNull
-    else:
-      echo "warning: unimplemented opcode \"", op, "\""
 
 proc interpret*(vm: var RodVM, env: var RodEnv, chunk: RodChunk): RodValue =
-  let call = Call(
-    env: env,
-    isModMain: true, chunk: chunk,
-    isForeign: false, pc: 0
-  )
-  vm.enterCall(call)
+  vm.enterCall(initCall(env)
+    .modMain()
+    .setChunk(chunk))
   result = vm.runCall()
   vm.exitCall()
 
@@ -222,3 +268,21 @@ proc newVM*(): RodVM =
     locals: @[],
     slots: @[]
   )
+
+#~~
+# Function implementations
+#~~
+
+proc addMethod*(class: var RodClass, name: string, impl: RodForeignProc) =
+  class.methods[name] = RodForeignFn(impl: impl)
+
+method doCall*(fn: RodBaseFn, vm: var RodVM) {.base.} =
+  vm.err(TypeError, "Tried to call an unimplemented function type")
+
+method doCall*(fn: RodForeignFn, vm: var RodVM) =
+  vm.enterCall(initCall(vm.currentCall.env)
+    .foreign()
+    .setFn(fn))
+  fn.impl(vm, vm.currentCall.env)
+  vm.push(vm[0])
+  vm.exitCall()

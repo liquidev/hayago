@@ -1,6 +1,6 @@
 #~~
 # the rod programming language
-# copyright (C) iLiquid, 2018
+# copyright (C) iLiquid, 2019
 # licensed under the MIT license
 #~~
 
@@ -13,13 +13,12 @@ type
   RodFnSignature* = tuple
     name: string
     arity: int
-  RodBaseFn* {.inheritable.} = ref object
-
+  RodBaseFn* = ref object of RootObj
     sig*: RodFnSignature
 
   RodClass* = ref object
     name*: string
-    methods*: TableRef[RodFnSignature, RodBaseFn]
+    methods*: TableRef[string, RodBaseFn]
     fields*: HashSet[string]
   RodObj* = ref object
     class*: RodClass
@@ -116,9 +115,19 @@ converter asRodVal*(val: RodBaseFn): RodValue =
 proc newClass*(name: string): RodClass =
   result = RodClass(
     name: name,
-    methods: newTable[RodFnSignature, RodBaseFn](),
+    methods: newTable[string, RodBaseFn](),
     fields: initSet[string]()
   )
+
+proc addFields*(class: var RodClass, names: varargs[string]) =
+  for f in names:
+    class.fields.incl(f)
+
+proc `[]`*(class: RodClass, methodName: string): RodBaseFn =
+  result = class.methods[methodName]
+
+proc `[]=`*(class: var RodClass, methodName: string, impl: RodBaseFn) =
+  class.methods[methodName] = impl
 
 proc newObject*(class: RodClass, userdata: Variant): RodObj =
   result = RodObj(

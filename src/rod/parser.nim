@@ -1,6 +1,6 @@
 #~~
 # the rod programming language
-# copyright (C) iLiquid, 2018
+# copyright (C) iLiquid, 2019
 # licensed under the MIT license
 #~~
 
@@ -30,7 +30,7 @@ type
     rnkVar
     # declarations
     rnkLet
-  RodNode* = ref object
+  RodNodeObj {.acyclic.} = object
     case kind*: RodNodeKind
     # terminal nodes
     of rnkBool:  boolVal*: bool
@@ -42,6 +42,7 @@ type
     else: sons*: seq[RodNode]
     pos*: int
     textPos*: TextPos
+  RodNode* = ref RodNodeObj
   RodBranchNodeKind* = concept k
     RodNode(kind: k).sons is seq[RodNode]
 
