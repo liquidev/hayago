@@ -186,7 +186,7 @@ proc runCall(vm: var RodVM): RodValue =
     chunk = call.chunk
     code = chunk.code
   while call.pc < code.len:
-    # {.computedGoto.}
+    {.computedGoto.}
     let op = call.readOp()
 
     case op
@@ -209,7 +209,7 @@ proc runCall(vm: var RodVM): RodValue =
     of roPopLocal:
       let id = int call.readU16()
       if id <= vm.locals.len:
-        vm.locals.setLen(id)
+        vm.locals.setLen(id + 1)
       vm.locals[id] = vm.pop()
 
     # functions, methods and calls

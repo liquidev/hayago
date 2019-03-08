@@ -26,5 +26,10 @@ template testRun*(input: string): untyped =
 suite "VM":
   test "calls":
     testRun("""
-      println(2 + 2);
+      let x = 5;
+      println(x * 2 + 2);
+      {
+        let y = x * 2;
+        println(y + 5);
+      }
     """)
