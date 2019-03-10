@@ -36,6 +36,18 @@ proc numType(vm: var RodVM, env: var RodEnv) =
     vm[0] = vm[0].numVal * vm[1].numVal
   numT.addMethod("/") do (vm: var RodVM, env: var RodEnv):
     vm[0] = vm[0].numVal / vm[1].numVal
+  numT.addMethod("==") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal == vm[1].numVal
+  numT.addMethod("!=") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal != vm[1].numVal
+  numT.addMethod("<") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal < vm[1].numVal
+  numT.addMethod(">") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal > vm[1].numVal
+  numT.addMethod("<=") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal <= vm[1].numVal
+  numT.addMethod(">=") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = vm[0].numVal >= vm[1].numVal
   env["Num"] = newObject(numT)
 
 stl[rsBase] = proc (vm: var RodVM, env: var RodEnv) =

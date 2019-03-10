@@ -79,6 +79,9 @@ proc readU32(call: var Call): uint32 =
   result = call.chunk.readU32(call.pc)
   call.pc += sizeof(result)
 
+proc jump(call: var Call, pc: int) =
+  call.pc = pc
+
 proc initCall(env: RodEnv): Call =
   Call(
     env: env,
@@ -249,6 +252,12 @@ proc runCall(vm: var RodVM): RodValue =
         vm.err(TypeError, $fn & " is not a function")
 
     # flow control
+    of roJump:
+      call.jump(chunk.offsets[int call.readU16()])
+    of roJumpCond:
+      let condition = vm.pop()
+      if condition:
+        call.jump(chunk.offsets[int call.readU16()])
     of roReturn:
       if vm.stack.len > 0:
         return vm.pop()

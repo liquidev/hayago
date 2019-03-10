@@ -96,7 +96,10 @@ var rules: array[low(RodNodeKind)..high(RodNodeKind),
 proc compile*(cp: var RodCompiler, chunk: var RodChunk, node: RodNode) =
   let oldPos = chunk.currentPos
   chunk.currentPos = node.textPos
-  rules[node.kind](cp, chunk, node)
+  if not isNil(rules[node.kind]):
+    rules[node.kind](cp, chunk, node)
+  else:
+    echo "rod/dev warning: compiling " & $node.kind & " is not implemented"
   chunk.currentPos = oldPos
 
 template rule(nodeKind: RodNodeKind, body: untyped) {.dirty.} =
@@ -140,6 +143,27 @@ rule rnkPrefix:
   chunk.emitU16(chunk.sym(node[1].opToken.op))
   chunk.emitOp(roCallMethod)
   chunk.emitU8(0)
+
+rule rnkIf:
+  var jumpsToEnd: seq[RodChunkLoc]
+  for i, branch in node.sons:
+    if branch.kind == rnkIfBranch:
+      cp.compile(chunk, branch[0])
+      chunk.emitOp(roJumpCond)
+      let jumpcLoc = chunk.emitPtr(2)
+      chunk.emitOp(roJump)
+      let jumpLoc = chunk.emitPtr(2)
+      chunk.fillPtr(jumpcLoc, int chunk.off(chunk.pos))
+      cp.compile(chunk, branch[1])
+      if i < node.sons.len - 1:
+        chunk.emitOp(roJump)
+        jumpsToEnd.add(chunk.emitPtr(2))
+      chunk.fillPtr(jumpLoc, int chunk.off(chunk.pos))
+    elif branch.kind == rnkBlock:
+      cp.compile(chunk, branch)
+  let endLoc = int chunk.off(chunk.pos)
+  for jmp in jumpsToEnd:
+    chunk.fillPtr(jmp, endLoc)
 
 rule rnkInfix:
   cp.compile(chunk, node[0])

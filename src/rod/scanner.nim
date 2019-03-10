@@ -20,6 +20,10 @@ type
     rtkLBracket, rtkRBracket,
     rtkLBrace, rtkRBrace
     rtkComma, rtkEndStmt
+    # flow control
+    rtkIf, rtkElse
+    rtkWhile, rtkFor, rtkIn, rtkLoop
+    rtkDo
     # declarations
     rtkLet
     # types
@@ -196,6 +200,13 @@ litRule rtkRBrace, "}"
 
 litRule rtkComma, ","
 litRule rtkEndStmt, ";"
+
+litRule rtkIf, "if"
+litRule rtkElse, "else"
+litRule rtkWhile, "while"
+litRule rtkFor, "for"
+litRule rtkIn, "in"
+litRule rtkDo, "do"
 
 litRule rtkLet, "let"
 

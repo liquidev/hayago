@@ -26,6 +26,8 @@ type
     rnkPrefix, rnkInfix
     rnkAssign
     rnkCall
+    # flow control
+    rnkIf, rnkIfBranch
     # variables
     rnkVar
     # declarations
@@ -74,7 +76,13 @@ proc `$`*(node: RodNode, pretty: bool = true): string =
 proc `[]`*(node: RodNode, index: int): RodNode =
   node.sons[index]
 
-converter isNotNone(node: RodNode): bool =
+proc first*(node: RodNode): RodNode =
+  node.sons[0]
+
+proc last*(node: RodNode): RodNode =
+  node.sons[^1]
+
+converter isNotNone*(node: RodNode): bool =
   result = node.kind != rnkNone
 
 proc emptyNode*(): RodNode = RodNode(kind: rnkNone)
@@ -149,9 +157,43 @@ proc parseExpr*(prec: int) {.rule.}
 proc parseExpr*() {.rule.} =
   result = scan.parseExpr(0)
 
+proc parseBlock*() {.rule.}
+
+proc parseDo*() {.rule.} =
+  if scan.expect([rtkDo]):
+    result = scan.parseBlock()
+    if not result:
+      scan.err("Missing block in do block")
+    if result.last.kind == rnkStmt:
+      scan.err(
+        "Do block must have a result " &
+        "(an expression without a semicolon)")
+
+# Gosh, I went through 3 different iterations of if statement parsing
+# until I landed on this one. The main advantage is that it's really small,
+# and pretty fast (the other ones' performance didn't satisfy me)
+proc parseIf*(allowElse: static[bool] = true) {.rule.} =
+  if scan.expect([rtkIf]):
+    var ifStmt = @[
+      scan.parseExpr(),
+      scan.parseBlock()
+    ]
+    if not ifStmt[0]: scan.err("If condition expected")
+    if not ifStmt[1]: scan.err("If branch expected")
+    when allowElse:
+      var branches = @[node(rnkIfBranch, ifStmt)]
+      while scan.expect([rtkElse]):
+        var branch = scan.parseIf(false)
+        if not branch: branch = scan.parseBlock()
+        if branch: branches.add(branch)
+      result = node(rnkIf, branches)
+    else:
+      result = node(rnkIfBranch, ifStmt)
+
 proc parseAtom*() {.rule.} =
-  result = node(rnkNone)
   result = scan.parseLiteral()
+  if not result: result = scan.parseIf()
+  if not result: result = scan.parseDo()
   if not result: result = scan.parseVar()
   if not result:
     if scan.expect([rtkLParen]):
@@ -163,7 +205,8 @@ proc parseCall*(left: RodNode) {.rule.} =
   if scan.expect([rtkLParen]):
     var args: seq[RodNode]
     while not scan.atEnd():
-      args.add(scan.parseExpr())
+      let arg = scan.parseExpr()
+      if arg: args.add(arg)
       if not scan.expect([rtkComma]):
         break
     if scan.expect([rtkRParen]):
@@ -245,14 +288,16 @@ proc parseLet*() {.rule.} =
       else:
         scan.err("Semicolon ';' expected after variable declaration")
 
-proc parseBlock*() {.rule.}
-
 proc parseStmt*() {.rule.} =
-  result = scan.parseExpr()
-  if result:
-    if not (scan.expect([rtkEndStmt]) or scan.peekBack().kind == rtkRBrace):
-      scan.err("Semicolon ';' expected after expression statement")
-    result = node(rnkStmt, result)
+  result = scan.parseIf()
+  if not result:
+    result = scan.parseExpr()
+    if result:
+      if not (scan.expect([rtkEndStmt]) or scan.peekBack().kind == rtkRBrace):
+        if scan.peekToken([rtkRBrace]).kind != rtkRBrace:
+          scan.err("Semicolon ';' expected after expression statement")
+      else:
+        result = node(rnkStmt, result)
   if not result: result = scan.parseBlock()
 
 proc parseDecl*() {.rule.} =

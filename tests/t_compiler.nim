@@ -33,6 +33,18 @@ suite "compiler":
         let x = x + y * 2;
       }
     """)
+  test "flow control":
+    testCompile(Script, """
+      let x = true;
+      let y = 2;
+      if x {
+        println("Hello, World!");
+      } else if y == 2 {
+        println("Hello, Nim!");
+      } else {
+        println("No hello for you");
+      }
+    """)
   test "scripts":
     testCompile(Script, """
       print(2 + 2);

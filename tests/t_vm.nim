@@ -33,3 +33,13 @@ suite "VM":
         println(y + 5);
       }
     """)
+  test "flow control":
+    testRun("""
+      let x = 2;
+      let y = 3;
+      if x < y {
+        println("x (2) is less than y (3)");
+      } else {
+        println("the world is ending");
+      }
+    """)

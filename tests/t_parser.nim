@@ -27,6 +27,24 @@ suite "parser":
     measureTime("parsing") do:
       var scan = newScanner("-10")
       echo parsePrefix(scan)
+  test "parseIf()":
+    measureTime("parsing") do:
+      var scan = newScanner("""
+        if x == 2 { 1 }
+        else if x == 3 { 2 }
+        else if x >= 6 { 3 }
+        else { 4 }
+      """)
+      echo parsePrefix(scan)
+  test "parseDo()":
+    measureTime("parsing") do:
+      var scan = newScanner("""
+        let x = do {
+          let a = f();
+          a + 3
+        };
+      """)
+      echo parseScript(scan)
   test "parseInfix()":
     measureTime("parsing") do:
       #var scan = newScanner("3 + 4 * 2 / (1 − 5) ^ 2 ^ 3")

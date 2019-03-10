@@ -18,4 +18,6 @@ type
     roCallFn     = "call_fn"
     roCallMethod = "call_method"
     #~ flow control
+    roJump       = "jump"
+    roJumpCond   = "jump_cond"
     roReturn     = "return"
