@@ -14,9 +14,6 @@ type
   RodForeignProc* = proc (vm: var RodVM, env: var RodEnv) {.nimcall.}
   RodForeignFn* = ref object of RodBaseFn
     impl*: RodForeignProc
-  RodCtorFn* = ref object of RodBaseFn
-    class*: RodClass
-    ctor*: RodBaseFn
 
   RodEnv* = ref object
     globals: TableRef[string, RodValue]
@@ -109,18 +106,16 @@ proc setChunk(call: Call, chunk: RodChunk): Call =
 # Functions
 #~~
 
-proc newCtorFn*(class: RodClass, fn: RodBaseFn): RodCtorFn =
-  result = RodCtorFn(
-    class: class,
-    ctor: fn
-  )
-
-proc `[]=`*(env: var RodEnv, global: string, class: RodClass) =
-  env.globals[global] = newCtorFn(class, RodBaseFn())
-
 method doCall*(fn: RodBaseFn, vm: var RodVM) {.base.}
 
 method doCall*(fn: RodForeignFn, vm: var RodVM)
+
+#~~
+# Objects
+#~~
+
+proc construct*(class: RodClass, vm: var RodVM): RodObj =
+  class[".ctor"].doCall(vm)
 
 #~~
 # VM
@@ -201,19 +196,31 @@ proc runCall(vm: var RodVM): RodValue =
       if call.env.globals.hasKey(name):
         vm.push(call.env[name])
       else:
-        vm.push(RodNull)
+        vm.err(TypeError, "Cannot reference undeclared global '" & name & "'")
     of roPushLocal:
       vm.push(vm.locals[int call.readU16()])
 
     of roDiscard:
       discard vm.pop()
-    of roPopGlobal:
-      call.env[chunk.symbols[int call.readU16()]] = vm.pop()
-    of roPopLocal:
+    of roNewGlobal:
+      let name = chunk.symbols[int call.readU16()]
+      if not call.env.globals.hasKey(name):
+        call.env[name] = RodNull
+    of roPopGlobal, roStoreGlobal:
+      let name = chunk.symbols[int call.readU16()]
+      if call.env.globals.hasKey(name):
+        call.env[name] = case op
+          of roPopGlobal: vm.pop()
+          else: vm.peek()
+      else:
+        vm.err(TypeError, "Cannot store undeclared global '" & name & "'")
+    of roPopLocal, roStoreLocal:
       let id = int call.readU16()
       if id <= vm.locals.len:
         vm.locals.setLen(id + 1)
-      vm.locals[id] = vm.pop()
+      vm.locals[id] = case op
+        of roPopLocal: vm.pop()
+        else: vm.peek()
 
     # functions, methods and calls
     of roPushMethod:
@@ -235,6 +242,8 @@ proc runCall(vm: var RodVM): RodValue =
       vm.slots.add(vm.popSeq(int call.readU8()))
       if fn.kind == rvkFn:
         fn.fnVal.doCall(vm)
+      elif fn.kind == rvkClass:
+        vm.push(fn.classVal.construct(vm))
       else:
         vm.err(TypeError, $fn & " is not a function")
     of roCallMethod:
@@ -258,6 +267,8 @@ proc runCall(vm: var RodVM): RodValue =
       let condition = vm.pop()
       if condition:
         call.jump(chunk.offsets[int call.readU16()])
+      else:
+        call.pc += 2
     of roReturn:
       if vm.stack.len > 0:
         return vm.pop()

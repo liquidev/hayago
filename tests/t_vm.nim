@@ -33,7 +33,7 @@ suite "VM":
         println(y + 5);
       }
     """)
-  test "flow control":
+  test "if stmt":
     testRun("""
       let x = 2;
       let y = 3;
@@ -42,4 +42,12 @@ suite "VM":
       } else {
         println("the world is ending");
       }
+    """)
+  test "loop stmt":
+    testRun("""
+      let x = 0;
+      loop {
+        println(x);
+        x = x + 1;
+      } while x < 10;
     """)

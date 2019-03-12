@@ -1,3 +1,4 @@
+import strutils
 import unittest
 
 import ../src/rod/[
@@ -14,7 +15,10 @@ template testCompile*(parseFn: untyped, input: string): untyped =
       cp = newCompiler()
       chunk = newChunk()
       scan = newScanner(input)
-    cp.compile(chunk, `parse parseFn`(scan))
+    let ast = `parse parseFn`(scan)
+    echo "ast:"
+    echo ($ast).indent(2)
+    cp.compile(chunk, ast)
     echo chunk
 
 suite "compiler":
@@ -33,7 +37,7 @@ suite "compiler":
         let x = x + y * 2;
       }
     """)
-  test "flow control":
+  test "if stmt":
     testCompile(Script, """
       let x = true;
       let y = 2;
@@ -43,6 +47,17 @@ suite "compiler":
         println("Hello, Nim!");
       } else {
         println("No hello for you");
+      }
+    """)
+  test "loop stmt":
+    testCompile(Script, """
+      let x = 0;
+      loop {
+        println(x);
+        x = x + 1;
+        if x > 10 {
+          break;
+        }
       }
     """)
   test "scripts":

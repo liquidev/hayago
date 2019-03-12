@@ -15,7 +15,7 @@ class Rod {
   }
 
   export {
-    say_hello(1)
+    say_hello()
   }
 }
 
@@ -134,24 +134,6 @@ let oct = 0o777;
 ```
 
 ```rust
-// Functions
-
-fn f(x) {
-  // implicit return, only allowed at the end of a function
-  // an implicit return **must not** have a semicolon
-  x + 2
-}
-
-fn g(y) {
-  // explicit return, can be used anywhere in a function
-  return x + 5;
-}
-
-assert(f(1) == 3);
-println(f"f(10) = {f(10)}");
-```
-
-```rust
 // Flow control
 fn cond(x) {
   x > 3
@@ -180,15 +162,29 @@ loop {
   ++i;
 } while i < 100;
 
+// rod doesn't have a primitive for loop, only an iterator-based one
+// if you need a primitive for, use while or loop...while
 for i in 1..10 {
   println(f"{i}"); // prints 1 through 10
 }
-// rod doesn't have a primitive for loop, only an iterator-based one
+```
 
-let list = [2, 5, 4, 10, 30];
-let sum = accum x in list into y { // universal comprehensions
-  y += x;
+```rust
+// Functions
+
+fn f(x) {
+  // implicit return, only allowed at the end of a function
+  // an implicit return **must not** have a semicolon
+  x + 2
 }
+
+fn g(y) {
+  // explicit return, can be used anywhere in a function
+  return x + 5;
+}
+
+assert(f(1) == 3);
+println(f"f(10) = {f(10)}");
 ```
 
 ```rust
@@ -234,9 +230,8 @@ class Vector {
   // an export block makes certain fields and methods public
   export {
     x, y,
-    // methods are exported with an argument count
-    // (or without, if all overloads are to be exported)
-    +(2), -()
+    // methods are exported with an extra (), to distinguish them from fields
+    +(), -()
   }
 }
 

@@ -30,16 +30,18 @@ type
     rvkBool
     rvkNum
     rvkStr
+    rvkClass
     rvkObj
     rvkFn
   RodValue* = object
     case kind*: RodValueKind
     of rvkNull: discard
-    of rvkBool: boolVal*: bool
-    of rvkNum:  numVal*: float
-    of rvkStr:  strVal*: string
-    of rvkObj:  objVal*: RodObj
-    of rvkFn:   fnVal*: RodBaseFn
+    of rvkBool:  boolVal*: bool
+    of rvkNum:   numVal*: float
+    of rvkStr:   strVal*: string
+    of rvkClass: classVal*: RodClass
+    of rvkObj:   objVal*: RodObj
+    of rvkFn:    fnVal*: RodBaseFn
 
 #~~
 # Values and their attributes
@@ -48,12 +50,13 @@ type
 proc `==`*(a, b: RodValue): bool =
   if a.kind == b.kind:
     case a.kind
-    of rvkNull: return true
-    of rvkBool: return a.boolVal == b.boolVal
-    of rvkNum:  return a.numVal == b.numVal
-    of rvkStr:  return a.strVal == b.strVal
-    of rvkObj:  return a.objVal == b.objVal
-    of rvkFn:   return a.fnVal == b.fnVal
+    of rvkNull:  return true
+    of rvkBool:  return a.boolVal == b.boolVal
+    of rvkNum:   return a.numVal == b.numVal
+    of rvkStr:   return a.strVal == b.strVal
+    of rvkClass: return a.classVal == b.classVal
+    of rvkObj:   return a.objVal == b.objVal
+    of rvkFn:    return a.fnVal == b.fnVal
 
 proc `$`*(val: RodValue): string =
   result =
@@ -62,7 +65,8 @@ proc `$`*(val: RodValue): string =
     of rvkBool: $val.boolVal
     of rvkNum: $val.numVal
     of rvkStr: val.strVal
-    of rvkObj: "<object " & val.objVal.class.name
+    of rvkClass: "<class " & val.classVal.name & ">"
+    of rvkObj: "<object of " & val.objVal.class.name & ">"
     of rvkFn: "<fn " & val.fnVal.sig.name & "(" & $val.fnVal.sig.arity & ")>"
 
 proc `$+`*(val: RodValue): string =
@@ -73,11 +77,12 @@ proc `$+`*(val: RodValue): string =
 proc className*(val: RodValue): string =
   result =
     case val.kind
-    of rvkNull: "Null"
-    of rvkBool: "Bool"
-    of rvkNum:  "Num"
-    of rvkStr:  "Str"
-    of rvkFn:   "Fn"
+    of rvkNull:  "Null"
+    of rvkBool:  "Bool"
+    of rvkNum:   "Num"
+    of rvkStr:   "Str"
+    of rvkFn:    "Fn"
+    of rvkClass: "Class"
     of rvkObj:  val.objVal.class.name
 
 let RodNull* = RodValue(kind: rvkNull)
@@ -101,6 +106,9 @@ converter asRodVal*(val: float): RodValue =
 
 converter asRodVal*(val: string): RodValue =
   RodValue(kind: rvkStr, strVal: val)
+
+converter asRodVal*(val: RodClass): RodValue =
+  RodValue(kind: rvkClass, classVal: val)
 
 converter asRodVal*(val: RodObj): RodValue =
   RodValue(kind: rvkObj, objVal: val)

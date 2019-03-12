@@ -22,7 +22,9 @@ type
     rtkComma, rtkEndStmt
     # flow control
     rtkIf, rtkElse
-    rtkWhile, rtkFor, rtkIn, rtkLoop
+    rtkLoop, rtkWhile
+    rtkFor, rtkIn
+    rtkBreak, rtkContinue
     rtkDo
     # declarations
     rtkLet
@@ -203,9 +205,12 @@ litRule rtkEndStmt, ";"
 
 litRule rtkIf, "if"
 litRule rtkElse, "else"
+litRule rtkLoop, "loop"
 litRule rtkWhile, "while"
 litRule rtkFor, "for"
 litRule rtkIn, "in"
+litRule rtkBreak, "break"
+litRule rtkContinue, "continue"
 litRule rtkDo, "do"
 
 litRule rtkLet, "let"

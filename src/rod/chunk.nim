@@ -4,6 +4,7 @@
 # licensed under the MIT license
 #~~
 
+import sets
 import strutils
 
 import scanner
@@ -147,11 +148,11 @@ proc disassemble*(chunk: RodChunk): string =
     of roPushConst:
       result.add($+chunk.consts[int chunk.readU16(pc)])
       pc += 2
-    of roPushGlobal, roPopGlobal,
+    of roNewGlobal, roPushGlobal, roPopGlobal, roStoreGlobal,
        roPushMethod:
       result.add($chunk.symbols[int chunk.readU16(pc)])
       pc += 2
-    of roPushLocal, roPopLocal:
+    of roPushLocal, roPopLocal, roStoreLocal:
       result.add("%" & $chunk.readU16(pc))
       pc += 2
     of roCallFn, roCallMethod:
@@ -179,7 +180,4 @@ proc `$`*(chunk: RodChunk): string =
   result.add(indent(disassemble(chunk), 2))
 
 proc newChunk*(): RodChunk =
-  RodChunk(
-    code: newSeq[uint8](),
-    consts: newSeq[RodValue]()
-  )
+  result = RodChunk()

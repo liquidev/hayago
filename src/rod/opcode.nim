@@ -7,17 +7,20 @@
 type
   RodOpcode* = enum
     #~ variables and values
-    roPushConst  = "push_const"
-    roPushGlobal = "push_global"
-    roPushLocal  = "push_local"
-    roDiscard    = "discard"
-    roPopGlobal  = "pop_global"
-    roPopLocal   = "pop_local"
+    roNewGlobal   = "new_global"
+    roPushConst   = "push_const"
+    roPushGlobal  = "push_global"
+    roPushLocal   = "push_local"
+    roDiscard     = "discard"
+    roPopGlobal   = "pop_global"
+    roPopLocal    = "pop_local"
+    roStoreGlobal = "store_global"
+    roStoreLocal  = "store_local"
     #~ functions and methods
-    roPushMethod = "push_method"
-    roCallFn     = "call_fn"
-    roCallMethod = "call_method"
+    roPushMethod  = "push_method"
+    roCallFn      = "call_fn"
+    roCallMethod  = "call_method"
     #~ flow control
-    roJump       = "jump"
-    roJumpCond   = "jump_cond"
-    roReturn     = "return"
+    roJump        = "jump"
+    roJumpCond    = "jump_cond"
+    roReturn      = "return"

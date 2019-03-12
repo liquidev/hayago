@@ -53,17 +53,26 @@ suite "parser":
   test "parseLet()":
     measureTime("parsing") do:
       var scan = newScanner("""
-        let x = 2, y = 3;""")
+        let x = 2, y = 3;
+      """)
       echo parseLet(scan)
+  test "parseLoop()":
+    measureTime("parsing") do:
+      var scanLoop = newScanner("""
+        loop {
+          print("Hello");
+        } while x < 10;
+      """)
+      echo parseLoop(scanLoop)
   test "parseBlock()":
     measureTime("parsing") do:
       var scan = newScanner("""
         {
           let x = 2 * 4;
-          x / 3;
+          x / 3
         }
       """)
-      echo parseBlock(scan)
+      echo parseBlock(scan, true)
   test "parseScript()":
     measureTime("parsing") do:
       var scan = newScanner("""
