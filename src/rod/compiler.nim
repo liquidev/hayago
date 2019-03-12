@@ -215,6 +215,19 @@ rule rnkLoop:
   chunk.emitU16(chunk.off(startLoc))
   cp.endLoop(chunk)
 
+rule rnkWhile:
+  cp.beginLoop(chunk)
+  cp.compile(chunk, node[0])
+  chunk.emitOp(roJumpCond)
+  let jumpcLoc = chunk.emitPtr(2)
+  chunk.emitOp(roJump)
+  cp.loop.endJumps.add(chunk.emitPtr(2))
+  chunk.fillPtr(jumpcLoc, int chunk.off(chunk.pos))
+  cp.compile(chunk, node[1])
+  chunk.emitOp(roJump)
+  cp.loop.startJumps.add(chunk.emitPtr(2))
+  cp.endLoop(chunk)
+
 rule rnkBreak:
   if cp.loops.len > 0:
     chunk.emitOp(roJump)

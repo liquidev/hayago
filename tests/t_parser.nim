@@ -58,12 +58,21 @@ suite "parser":
       echo parseLet(scan)
   test "parseLoop()":
     measureTime("parsing") do:
-      var scanLoop = newScanner("""
+      var scan = newScanner("""
         loop {
           print("Hello");
         } while x < 10;
       """)
-      echo parseLoop(scanLoop)
+      echo parseLoop(scan)
+  test "parseWhile()":
+    measureTime("parsing") do:
+      var scan = newScanner("""
+        while x < 30 {
+          println(x);
+          x = x + 1;
+        }
+      """)
+      echo parseWhile(scan)
   test "parseBlock()":
     measureTime("parsing") do:
       var scan = newScanner("""

@@ -60,6 +60,14 @@ suite "compiler":
         }
       }
     """)
+  test "while stmt":
+    testCompile(Script, """
+      let x = 0;
+      while x < 10 {
+        println(x);
+        x = x + 1;
+      }
+    """)
   test "scripts":
     testCompile(Script, """
       print(2 + 2);

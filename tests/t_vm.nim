@@ -51,3 +51,11 @@ suite "VM":
         x = x + 1;
       } while x < 10;
     """)
+  test "while stmt":
+    testRun("""
+      let x = 0;
+      while x < 10 {
+        println(x);
+        x = x + 1;
+      }
+    """)

@@ -333,11 +333,12 @@ proc parseWhile*() {.rule.} =
     let loopBlock = scan.parseBlock(false)
     if not loopBlock:
       scan.err("Missing block in while loop")
-
+    result = node(rnkWhile, loopCheck, loopBlock)
 
 proc parseStmt*() {.rule.} =
   result = scan.parseIf(true)
   if not result: result = scan.parseLoop()
+  if not result: result = scan.parseWhile()
   if not result: result = scan.parseBreak()
   if not result: result = scan.parseContinue()
   if not result:
