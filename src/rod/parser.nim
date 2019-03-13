@@ -150,10 +150,11 @@ macro rule(body: untyped): untyped =
 
 proc parseLiteral*() {.rule.} =
   var atom: RodToken
-  if scan.expect(atom, [rtkNull, rtkBool, rtkNum, rtkStr]):
+  if scan.expect(atom, [rtkNull, rtkTrue, rtkFalse, rtkNum, rtkStr]):
     case atom.kind
     of rtkNull: result = nullNode()
-    of rtkBool: result = boolNode(atom.boolVal)
+    of rtkTrue: result = boolNode(true)
+    of rtkFalse: result = boolNode(false)
     of rtkNum: result = numNode(atom.numVal)
     of rtkStr: result = strNode(atom.strVal)
     else: discard
@@ -171,7 +172,7 @@ proc parseExpr*() {.rule.} =
 proc parseBlock*(implicitReturn: static[bool]) {.rule.}
 
 proc parseDo*() {.rule.} =
-  if scan.expect([rtkDo]):
+  if scan.expectKw(rtkDo):
     result = scan.parseBlock(true)
     if not result:
       scan.err("Missing block in do block")
@@ -180,7 +181,7 @@ proc parseDo*() {.rule.} =
 # until I landed on this one. The main advantage is that it's really small,
 # and pretty fast (the other ones' performance didn't satisfy me)
 proc parseIf*(isStmt: static[bool], allowElse: static[bool] = true) {.rule.} =
-  if scan.expect([rtkIf]):
+  if scan.expectKw(rtkIf):
     var ifStmt = @[
       scan.parseExpr(),
       scan.parseBlock(not isStmt)
@@ -189,7 +190,7 @@ proc parseIf*(isStmt: static[bool], allowElse: static[bool] = true) {.rule.} =
     if not ifStmt[1]: scan.err("If branch expected")
     when allowElse:
       var branches = @[node(rnkIfBranch, ifStmt)]
-      while scan.expect([rtkElse]):
+      while scan.expectKw(rtkElse):
         var branch = scan.parseIf(isStmt, false)
         if not branch: branch = scan.parseBlock(not isStmt)
         if branch: branches.add(branch)
@@ -203,20 +204,20 @@ proc parseAtom*() {.rule.} =
   if not result: result = scan.parseDo()
   if not result: result = scan.parseVar()
   if not result:
-    if scan.expect([rtkLParen]):
+    if scan.expectLit(rtkLParen):
       result = scan.parseExpr()
-      if not scan.expect([rtkRParen]):
+      if not scan.expectLit(rtkRParen):
         scan.err("Missing right paren ')'")
 
 proc parseCall*(left: RodNode) {.rule.} =
-  if scan.expect([rtkLParen]):
+  if scan.expectLit(rtkLParen):
     var args: seq[RodNode]
     while not scan.atEnd():
       let arg = scan.parseExpr()
       if arg: args.add(arg)
-      if not scan.expect([rtkComma]):
+      if not scan.expectLit(rtkComma):
         break
-    if scan.expect([rtkRParen]):
+    if scan.expectLit(rtkRParen):
       result = scan.parseCall(node(rnkCall, left, node(rnkList, args)))
     else:
       scan.err("Missing right paren ')'")
@@ -260,7 +261,7 @@ proc parseExpr*(prec: int) {.rule.} =
 
 proc parseAssign*() {.rule.} =
   let left = scan.parseExpr()
-  if scan.expect([rtkEq]):
+  if scan.expectLit(rtkEq):
     let right = scan.parseExpr()
     if right.kind != rnkNone:
       result = node(rnkAssign, left, right)
@@ -269,56 +270,55 @@ proc parseAssign*() {.rule.} =
 
 proc parseLet*() {.rule.} =
   # ahh, variable declarations. so simple yet so complex
-  if scan.expect([rtkLet]):
-    if scan.ignore():
-      var assignments: seq[RodNode]
-      while true:
-        let assign = scan.parseAssign()
-        var left, right: RodNode
-        if assign.kind != rnkNone:
-          if assign.kind == rnkVar:
-            left = assign
-            right = nullNode()
-          elif assign.kind == rnkAssign:
-            if assign[0].kind != rnkVar:
-              scan.err(
-                "Left-hand side of variable assignment must be an identifier")
-            left = assign[0]
-            right = assign[1]
-          else:
-            scan.err("Identifier expected")
-        assignments.add(node(rnkAssign, left, right))
-        if not scan.expect([rtkComma]):
-          break
-      if scan.expect([rtkEndStmt]):
-        result = node(rnkLet, assignments)
-      else:
-        scan.err("Semicolon ';' expected after variable declaration")
+  if scan.expectKw(rtkLet):
+    var assignments: seq[RodNode]
+    while true:
+      let assign = scan.parseAssign()
+      var left, right: RodNode
+      if assign.kind != rnkNone:
+        if assign.kind == rnkVar:
+          left = assign
+          right = nullNode()
+        elif assign.kind == rnkAssign:
+          if assign[0].kind != rnkVar:
+            scan.err(
+              "Left-hand side of variable assignment must be an identifier")
+          left = assign[0]
+          right = assign[1]
+        else:
+          scan.err("Identifier expected")
+      assignments.add(node(rnkAssign, left, right))
+      if not scan.expectLit(rtkComma):
+        break
+    if scan.expectLit(rtkEndStmt):
+      result = node(rnkLet, assignments)
+    else:
+      scan.err("Semicolon ';' expected after variable declaration")
 
 proc parseBreak*() {.rule.} =
-  if scan.expect([rtkBreak]):
-    if scan.expect([rtkEndStmt]):
+  if scan.expectKw(rtkBreak):
+    if scan.expectLit(rtkEndStmt):
       result = node(rnkBreak)
     else:
       scan.err("Semicolon ';' expected after break statement")
 
 proc parseContinue*() {.rule.} =
-  if scan.expect([rtkContinue]):
-    if scan.expect([rtkEndStmt]):
+  if scan.expectKw(rtkContinue):
+    if scan.expectLit(rtkEndStmt):
       result = node(rnkContinue)
     else:
       scan.err("Semicolon ';' expected after continue statement")
 
 proc parseLoop*() {.rule.} =
-  if scan.expect([rtkLoop]):
+  if scan.expectKw(rtkLoop):
     let loopBlock = scan.parseBlock(false)
     if not loopBlock:
       scan.err("Missing block in loop statement")
-    if scan.expect([rtkWhile]):
+    if scan.expectKw(rtkWhile):
       let loopCheck = scan.parseExpr()
       if not loopCheck:
         scan.err("Missing condition in loop...while statement")
-      if scan.expect([rtkEndStmt]):
+      if scan.expectLit(rtkEndStmt):
         result = node(rnkLoop, loopBlock, loopCheck)
       else:
         scan.err("Semicolon ';' expected after loop...while statement")
@@ -326,7 +326,7 @@ proc parseLoop*() {.rule.} =
       result = node(rnkLoop, loopBlock)
 
 proc parseWhile*() {.rule.} =
-  if scan.expect([rtkWhile]):
+  if scan.expectKw(rtkWhile):
     let loopCheck = scan.parseExpr()
     if not loopCheck:
       scan.err("Missing condition in while loop")
@@ -334,6 +334,16 @@ proc parseWhile*() {.rule.} =
     if not loopBlock:
       scan.err("Missing block in while loop")
     result = node(rnkWhile, loopCheck, loopBlock)
+
+proc parseFor*() {.rule.} =
+  if scan.expectKw(rtkFor):
+    let loopLocal = scan.parseVar()
+    if not loopLocal:
+      scan.err("Missing local in for loop")
+    if scan.expectKw(rtkIn):
+      let loopIter = scan.parseExpr()
+      if not loopIter:
+        scan.err("Missing iterator in for loop")
 
 proc parseStmt*() {.rule.} =
   result = scan.parseIf(true)
@@ -344,7 +354,7 @@ proc parseStmt*() {.rule.} =
   if not result:
     result = scan.parseAssign()
     if result:
-      if not (scan.expect([rtkEndStmt]) or scan.peekBack().kind == rtkRBrace):
+      if not (scan.expectLit(rtkEndStmt)):
         if scan.peekToken([rtkRBrace]).kind != rtkRBrace:
           scan.err("Semicolon ';' expected after expression statement")
       else:
@@ -356,12 +366,12 @@ proc parseDecl*() {.rule.} =
   if not result: result = scan.parseStmt()
 
 proc parseBlock*(implicitReturn: static[bool]) {.rule.} =
-  if scan.expect([rtkLBrace]):
+  if scan.expectLit(rtkLBrace):
     var nodes: seq[RodNode]
     while not scan.atEnd():
       let decl = scan.parseDecl()
       nodes.add(decl)
-      if scan.expect([rtkRBrace]):
+      if scan.expectLit(rtkRBrace):
         break
     when implicitReturn:
       if nodes[^1].kind notin ExprNodes:

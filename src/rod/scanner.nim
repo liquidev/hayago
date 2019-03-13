@@ -12,30 +12,32 @@ type
   RodScanner* = object
     input*: string
     pos*: int
-    lastToken: RodToken
   RodTokenKind* = enum
     rtkNone
     # parenthesis and punctuation
-    rtkLParen, rtkRParen
-    rtkLBracket, rtkRBracket,
-    rtkLBrace, rtkRBrace
-    rtkComma, rtkEndStmt
+    rtkLParen = "(", rtkRParen = ")"
+    rtkLBracket = "[", rtkRBracket = "]"
+    rtkLBrace = "{", rtkRBrace = "}"
+    rtkComma = ","
+    rtkEndStmt = ";" # TODO: change this to support either ; or \n
     # flow control
-    rtkIf, rtkElse
-    rtkLoop, rtkWhile
-    rtkFor, rtkIn
-    rtkBreak, rtkContinue
-    rtkDo
+    rtkIf = "if", rtkElse = "else"
+    rtkLoop = "loop", rtkWhile = "while"
+    rtkFor = "for", rtkIn = "in"
+    rtkBreak = "break", rtkContinue = "continue"
+    rtkDo = "do"
     # declarations
-    rtkLet
+    rtkLet = "let"
     # types
-    rtkNull, rtkBool, rtkNum, rtkStr
+    rtkNull = "null"
+    rtkTrue = "true", rtkFalse = "false"
+    rtkNum, rtkStr
     # operators
-    rtkDot, rtkEq, rtkColon, rtkDColon
+    rtkDot = ".", rtkEq = "="
+    rtkColon = ":", rtkDColon = "::"
     rtkOp, rtkIdent
   RodToken* = object
     case kind*: RodTokenKind
-    of rtkBool:  boolVal*: bool
     of rtkNum:   numVal*: float
     of rtkStr:   strVal*: string
     of rtkOp:
@@ -135,30 +137,6 @@ proc ignore*(scan: var RodScanner): bool {.discardable.} =
     if nested: continue
     break
 
-type
-  ExpectMode* = enum
-    emNormal, emNoIgn, emReqIgn
-
-proc expect*(scan: var RodScanner,
-             token: var RodToken, expected: openarray[RodTokenKind],
-             mode: ExpectMode = emNormal): bool =
-  case mode
-  of emNormal: scan.ignore()
-  of emNoIgn: discard
-  of emReqIgn:
-    if not scan.ignore(): return false
-  for exp in expected:
-    let ruleResult = rules[exp](scan)
-    if ruleResult.kind != rtkNone:
-      token = ruleResult
-      return true
-
-proc expect*(scan: var RodScanner,
-             expected: openarray[RodTokenKind],
-             mode: ExpectMode = emNormal): bool =
-  var token: RodToken
-  result = scan.expect(token, expected, mode)
-
 proc peekToken*(scan: var RodScanner,
                 expected: varargs[RodTokenKind]): RodToken =
   let pos = scan.pos
@@ -170,8 +148,37 @@ proc peekToken*(scan: var RodScanner,
       break
   scan.goto(pos)
 
-proc peekBack*(scan: var RodScanner): RodToken =
-  result = scan.lastToken
+proc expect*(scan: var RodScanner,
+             token: var RodToken, expected: openarray[RodTokenKind]): bool =
+  ## The generic ``expect``. It matches all tokens in ``expected``, \
+  ## and returns true if any of them matched successfully.
+  ## It also stores the resulting token in ``token``.
+  scan.ignore()
+  for exp in expected:
+    let ruleResult = rules[exp](scan)
+    if ruleResult.kind != rtkNone:
+      token = ruleResult
+      return true
+
+proc expectLit*(scan: var RodScanner, lit: RodTokenKind): bool =
+  ## ``expect``, but for literals. \
+  ## Returns true if the next characters in the input match ``$lit``.
+  scan.ignore()
+  let litStr = $lit
+  if scan.peek(litStr.len) == litStr:
+    scan.next(litStr.len)
+    result = true
+
+proc expectKw*(scan: var RodScanner, kw: RodTokenKind): bool =
+  ## ``expectLit``, but for keywords. \
+  ## Instead of checking for the literal match, it matches an identifier and \
+  ## compares it against ``$kw``.
+  ## This prevents bugs where eg. an assignment to a variable called \
+  ## ``loopCheck`` would be invalidly interpreted as a ``loop`` statement.
+  scan.ignore()
+  var ident: RodToken
+  if scan.expect(ident, [rtkIdent]):
+    result = ident.ident == $kw
 
 proc nextToken*(scan: var RodScanner,
                 expected: varargs[RodTokenKind]): RodToken =
@@ -183,7 +190,6 @@ template rule(tokenKind: RodTokenKind, body: untyped): untyped {.dirty.} =
     let pos = scan.pos
     body
     if result.kind != rtkNone:
-      scan.lastToken = result
       result.pos = pos
     else:
       scan.goto(pos)
@@ -192,36 +198,6 @@ template litRule(tokenKind: RodTokenKind, literal: string): untyped =
   rule tokenKind:
     if scan.match(literal):
       result = RodToken(kind: tokenKind)
-
-litRule rtkLParen, "("
-litRule rtkRParen, ")"
-litRule rtkLBracket, "["
-litRule rtkRBracket, "]"
-litRule rtkLBrace, "{"
-litRule rtkRBrace, "}"
-
-litRule rtkComma, ","
-litRule rtkEndStmt, ";"
-
-litRule rtkIf, "if"
-litRule rtkElse, "else"
-litRule rtkLoop, "loop"
-litRule rtkWhile, "while"
-litRule rtkFor, "for"
-litRule rtkIn, "in"
-litRule rtkBreak, "break"
-litRule rtkContinue, "continue"
-litRule rtkDo, "do"
-
-litRule rtkLet, "let"
-
-litRule rtkNull, "null"
-
-rule rtkBool:
-  if scan.match("false"):
-    result = RodToken(kind: rtkBool, boolVal: false)
-  elif scan.match("true"):
-    result = RodToken(kind: rtkBool, boolVal: true)
 
 rule rtkNum:
   if scan.match("0x"):
@@ -274,19 +250,12 @@ rule rtkOp:
     var
       prec = -1
       leftAssoc = true
-    # primary operators
-    if op in [ "^" ]:
-      prec = 10
-      leftAssoc = false
-    elif op in [ "*", "/", "%" ]: prec = 9
-    elif op in [ "+", "-" ]: prec = 8
-    elif op in [ "&" ]: prec = 7
-    elif op in [ "..", "..." ]: prec = 6
-    elif op in [ "==", "<=", "<", ">=", ">", "!=",
-                 "is", "in" ]: prec = 5
+    # enforced operators
+    if op in [ "==", "<=", "<", ">=", ">", "!=",
+               "is", "in" ]: prec = 5
     elif op in [ "&&" ]: prec = 4
     elif op in [ "||" ]: prec = 3
-    # fallback operators
+    # custom operators
     if prec == -1:
       if op.endsWith("="): prec = 1
       elif op.endsWith("->") or op.endsWith("=>") or op.endsWith("~>"):
@@ -303,9 +272,11 @@ rule rtkOp:
       of '=', '<', '>', '!': prec = 5
       of '@', ':', '?': prec = 2
       else: discard
-
     if prec != -1:
-      result = RodToken(kind: rtkOp, op: op, prec: prec, leftAssoc: leftAssoc)
+      result = RodToken(
+        kind: rtkOp, op: op,
+        prec: prec, leftAssoc: leftAssoc
+      )
 
 rule rtkIdent:
   var ident = ""
