@@ -146,11 +146,15 @@ proc expect*(scan: var RodScanner,
   let lastPos = scan.pos
   scan.ignore()
   for exp in expected:
-    let ruleResult = rules[exp](scan)
+    let
+      posBeforeRule = scan.pos
+      ruleResult = rules[exp](scan)
     if ruleResult.kind != rtkNone:
       token = ruleResult
       result = true
       break
+    else:
+      scan.goto(posBeforeRule)
   when peek:
     scan.goto(lastPos)
 
@@ -164,6 +168,8 @@ proc expectLit*(scan: var RodScanner, lit: RodTokenKind,
   if scan.peek(litStr.len) == litStr:
     scan.next(litStr.len)
     result = true
+  else:
+    scan.goto(lastPos)
   when peek:
     scan.goto(lastPos)
 
@@ -178,7 +184,11 @@ proc expectKw*(scan: var RodScanner, kw: RodTokenKind,
   scan.ignore()
   var ident: RodToken
   if scan.expect(ident, [rtkIdent]):
-    result = ident.ident == $kw
+    let eq = ident.ident == $kw
+    if eq:
+      result = true
+    else:
+      scan.goto(lastPos)
   when peek:
     scan.goto(lastPos)
 

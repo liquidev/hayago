@@ -10,16 +10,18 @@ import ../src/rod/[
 import utils
 
 template testCompile(parseFn: untyped, input: string): untyped =
+  var
+    cp = newCompiler()
+    chunk = newChunk()
+    scan = newScanner(input)
+    ast: RodNode
+  measureTime("parsing") do:
+    ast = `parse parseFn`(scan)
+  echo "ast:"
+  echo ($ast).indent(2)
   measureTime("compilation") do:
-    var
-      cp = newCompiler()
-      chunk = newChunk()
-      scan = newScanner(input)
-    let ast = `parse parseFn`(scan)
-    echo "ast:"
-    echo ($ast).indent(2)
     cp.compile(chunk, ast)
-    echo chunk
+  echo chunk
 
 suite "compiler":
   test "literals":
@@ -72,6 +74,17 @@ suite "compiler":
     testCompile(Script, """
       for x in 0..10 {
         println(x);
+      }
+    """)
+  test "short-circuiting":
+    testCompile(Script, """
+      let x = 1;
+      let y = 2;
+      if x == y || y > x {
+        println("short-circuiting or");
+      }
+      if x == y && y > x {
+        println("short-circuiting and");
       }
     """)
   test "scripts":

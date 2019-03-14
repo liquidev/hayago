@@ -193,10 +193,28 @@ rule rnkIf:
 
 rule rnkInfix:
   case node[1].opToken.op
+  # || and && are special cases handled by the compiler. We cannot implement
+  # short-circuiting in the STL without lazy evaluation
+  # (which would add a lot of complexity), so we just bake those into the
+  # compiler. This unfortunately means that || and && are the only
+  # non-overridable operators, but let's face it - who does that?
   of "||":
-    discard
+    cp.compile(chunk, node[0])
+    chunk.emitOp(roJumpShort)
+    let jumpLoc = chunk.emitPtr(2)
+    chunk.emitOp(roDiscard)
+    cp.compile(chunk, node[2])
+    chunk.fillPtr(jumpLoc, int chunk.off(chunk.pos))
   of "&&":
-    discard
+    cp.compile(chunk, node[0])
+    chunk.emitOp(roJumpShort)
+    let jumpRightLoc = chunk.emitPtr(2)
+    chunk.emitOp(roJump)
+    let jumpEndLoc = chunk.emitPtr(2)
+    chunk.fillPtr(jumpRightLoc, int chunk.off(chunk.pos))
+    chunk.emitOp(roDiscard)
+    cp.compile(chunk, node[2])
+    chunk.fillPtr(jumpEndLoc, int chunk.off(chunk.pos))
   else:
     cp.compile(chunk, node[0])
     chunk.emitOp(roPushMethod)

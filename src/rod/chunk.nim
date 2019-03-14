@@ -76,7 +76,7 @@ proc emitPtr*(chunk: var RodChunk, size: int): RodChunkLoc =
   result = (chunk.code.len, size)
   chunk.emit(size)
   for n in 0..<size:
-    chunk.emitU8(0'u8)
+    chunk.code.add(0'u8)
 
 proc fillPtr*(chunk: var RodChunk, point: RodChunkLoc, val: int) =
   let
@@ -158,10 +158,10 @@ proc disassemble*(chunk: RodChunk): string =
     of roCallFn, roCallMethod:
       result.add($chunk.readU8(pc))
       pc += 1
-    of roJump, roJumpCond:
+    of roJump, roJumpCond, roJumpShort:
       result.add("@" & toHex(int32 chunk.offsets[int chunk.readU16(pc)]))
       pc += 2
-    of roDiscard, roReturn: discard
+    of roIntoBool, roDiscard, roReturn: discard
 
 proc `$`*(chunk: RodChunk): string =
   result.add("bytes:")

@@ -33,6 +33,16 @@ suite "parser":
       else if x >= 6 { 3 }
       else { 4 }
     """)
+    testParse(parsePrefix, """
+      if x == y && y < x {
+        x + y * 2
+      }
+    """)
+    testParse(parseScript, """
+      if x {}
+      if y {}
+      if z {}
+    """)
   test "parseDo":
     testParse(parseScript, """
       let x = do {
@@ -42,6 +52,7 @@ suite "parser":
     """)
   test "parseInfix":
     testParse(parseAssign, "3 + 4 * 2 / (1 - 5) ^ 2 ^ 3")
+    testParse(parseAssign, "x == y && y > x")
   test "parseLet":
     testParse(parseLet, """
       let x = 2, y = 3;
