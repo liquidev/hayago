@@ -4,90 +4,71 @@ import unittest
 import ../src/rod/[scanner, parser]
 import utils
 
-suite "parser":
-  test "parseLiteral()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        /* Multiline
-          /* nested */
-          comment */
+template testParse(parseFn: untyped, input: string): untyped =
+  measureTime("parsing") do:
+    var scan = newScanner(input)
+    echo parseFn(scan)
 
-        "Hello, World!"
-      """)
-      echo parseLiteral(scan)
+suite "parser":
+  test "parseLiteral":
+    testParse(parseLiteral, """
+      /* Multiline
+        /* nested */
+        comment */
+
+      "Hello, World!"
+    """)
   test "parseVar()":
-    measureTime("parsing") do:
-      var scan = newScanner("""abc""")
-      echo parseVar(scan)
-  test "parseCall()":
-    measureTime("parsing") do:
-      var scan = newScanner("fun(42)");
-      echo parsePrefix(scan)
-  test "parsePrefix()":
-    measureTime("parsing") do:
-      var scan = newScanner("-10")
-      echo parsePrefix(scan)
-  test "parseIf()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        if x == 2 { 1 }
-        else if x == 3 { 2 }
-        else if x >= 6 { 3 }
-        else { 4 }
-      """)
-      echo parsePrefix(scan)
-  test "parseDo()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        let x = do {
-          let a = f();
-          a + 3
-        };
-      """)
-      echo parseScript(scan)
-  test "parseInfix()":
-    measureTime("parsing") do:
-      #var scan = newScanner("3 + 4 * 2 / (1 − 5) ^ 2 ^ 3")
-      var scan = newScanner("3 + 4 * 2 / (1 - 5) ^ 2 ^ 3")
-      echo `$`(parseExpr(scan, 0), false)
-  test "parseLet()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        let x = 2, y = 3;
-      """)
-      echo parseLet(scan)
-  test "parseLoop()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        loop {
-          print("Hello");
-        } while x < 10;
-      """)
-      echo parseLoop(scan)
-  test "parseWhile()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        while x < 30 {
-          println(x);
-          x = x + 1;
-        }
-      """)
-      echo parseWhile(scan)
-  test "parseBlock()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        {
-          let x = 2 * 4;
-          x / 3
-        }
-      """)
-      echo parseBlock(scan, true)
-  test "parseScript()":
-    measureTime("parsing") do:
-      var scan = newScanner("""
-        let x = 10;
-        let y = x + 2;
-        print(x);
-        curry(x)(y);
-      """)
-      echo parseScript(scan)
+    testParse(parseVar, """
+      abc
+    """)
+  test "parseCall":
+    testParse(parsePrefix, "fun(24)")
+  test "parsePrefix":
+    testParse(parsePrefix, "-10")
+  test "parseIf":
+    testParse(parsePrefix, """
+      if x == 2 { 1 }
+      else if x == 3 { 2 }
+      else if x >= 6 { 3 }
+      else { 4 }
+    """)
+  test "parseDo":
+    testParse(parseScript, """
+      let x = do {
+        let a = f();
+        a + 3
+      };
+    """)
+  test "parseInfix":
+    testParse(parseAssign, "3 + 4 * 2 / (1 - 5) ^ 2 ^ 3")
+  test "parseLet":
+    testParse(parseLet, """
+      let x = 2, y = 3;
+    """)
+  test "parseLoop":
+    testParse(parseLoop, """
+      loop {
+        print("Hello");
+      } while x < 10;
+    """)
+  test "parseWhile":
+    testParse(parseWhile, """
+      while x < 30 {
+        println(x);
+        x = x + 1;
+      }
+    """)
+  test "parseFor":
+    testParse(parseFor, """
+      for i in 0..10 {
+        println(i);
+      }
+    """)
+  test "parseScript":
+    testParse(parseScript, """
+      let x = 10;
+      let y = x + 2;
+      print(x);
+      curry(x)(y);
+    """)

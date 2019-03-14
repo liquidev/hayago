@@ -21,10 +21,6 @@ type
     stack, locals, slots: seq[RodValue]
     callStack: seq[Call]
 
-  RuntimeError* = object of Exception
-    at*: TextPos
-  TypeError* = object of RuntimeError
-
   Call = ref object
     env*: RodEnv
     case isModMain: bool

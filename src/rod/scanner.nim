@@ -137,48 +137,50 @@ proc ignore*(scan: var RodScanner): bool {.discardable.} =
     if nested: continue
     break
 
-proc peekToken*(scan: var RodScanner,
-                expected: varargs[RodTokenKind]): RodToken =
-  let pos = scan.pos
-  scan.ignore()
-  for exp in expected:
-    let ruleResult = rules[exp](scan)
-    if ruleResult.kind != rtkNone:
-      result = ruleResult
-      break
-  scan.goto(pos)
-
 proc expect*(scan: var RodScanner,
-             token: var RodToken, expected: openarray[RodTokenKind]): bool =
+             token: var RodToken, expected: openarray[RodTokenKind],
+             peek: static[bool] = false): bool =
   ## The generic ``expect``. It matches all tokens in ``expected``, \
   ## and returns true if any of them matched successfully.
   ## It also stores the resulting token in ``token``.
+  let lastPos = scan.pos
   scan.ignore()
   for exp in expected:
     let ruleResult = rules[exp](scan)
     if ruleResult.kind != rtkNone:
       token = ruleResult
-      return true
+      result = true
+      break
+  when peek:
+    scan.goto(lastPos)
 
-proc expectLit*(scan: var RodScanner, lit: RodTokenKind): bool =
+proc expectLit*(scan: var RodScanner, lit: RodTokenKind,
+                peek: static[bool] = false): bool =
   ## ``expect``, but for literals. \
   ## Returns true if the next characters in the input match ``$lit``.
+  let lastPos = scan.pos
   scan.ignore()
   let litStr = $lit
   if scan.peek(litStr.len) == litStr:
     scan.next(litStr.len)
     result = true
+  when peek:
+    scan.goto(lastPos)
 
-proc expectKw*(scan: var RodScanner, kw: RodTokenKind): bool =
+proc expectKw*(scan: var RodScanner, kw: RodTokenKind,
+               peek: static[bool] = false): bool =
   ## ``expectLit``, but for keywords. \
   ## Instead of checking for the literal match, it matches an identifier and \
   ## compares it against ``$kw``.
   ## This prevents bugs where eg. an assignment to a variable called \
   ## ``loopCheck`` would be invalidly interpreted as a ``loop`` statement.
+  let lastPos = scan.pos
   scan.ignore()
   var ident: RodToken
   if scan.expect(ident, [rtkIdent]):
     result = ident.ident == $kw
+  when peek:
+    scan.goto(lastPos)
 
 proc nextToken*(scan: var RodScanner,
                 expected: varargs[RodTokenKind]): RodToken =
@@ -194,19 +196,20 @@ template rule(tokenKind: RodTokenKind, body: untyped): untyped {.dirty.} =
     else:
       scan.goto(pos)
 
-template litRule(tokenKind: RodTokenKind, literal: string): untyped =
-  rule tokenKind:
-    if scan.match(literal):
-      result = RodToken(kind: tokenKind)
-
 rule rtkNum:
-  if scan.match("0x"):
-    var hexNum = ""
+  template intLit(digits: set[char], parser: untyped, name: string) =
+    var num = ""
     while scan.peek(1)[0] in HexDigits:
-      hexNum.add(scan.consume(1))
-    if hexNum == "":
-      scan.err("Hex number literal must have at least one digit")
-    result = RodToken(kind: rtkNum, numVal: float parseHexInt(hexNum))
+      num.add(scan.consume(1))
+    if num == "":
+      scan.err(name & " number literal must have at least one digit")
+    result = RodToken(kind: rtkNum, numVal: float parser(num))
+  if scan.match("0x"):
+    intLit(HexDigits, parseHexInt, "Hexadecimal")
+  elif scan.match("0b"):
+    intLit({'0', '1'}, parseBinInt, "Binary")
+  elif scan.match("0o"):
+    intLit({'0', '7'}, parseOctInt, "Octal")
   else:
     var num = ""
     while scan.peek(1)[0] in Digits:
@@ -226,16 +229,11 @@ rule rtkStr:
     scan.next(1)
     result = RodToken(kind: rtkStr, strVal: str)
 
-litRule rtkDot, "."
-litRule rtkEq, "="
-litRule rtkColon, ":"
-litRule rtkDColon, "::"
-
 const
   OperatorChars = {
     '=', '+', '-', '*', '/', '<', '>',
     '@', '$', '~', '&', '%', '|',
-    '!', '?', '^', '.', ':',
+    '!', '?', '^', '.', ':', '\\',
     'a'..'z'
   }
   ReservedOps = [
@@ -265,7 +263,7 @@ rule rtkOp:
         prec = 10
         leftAssoc = false
       of '$': prec = 10
-      of '*', '%', '/': prec = 9
+      of '*', '%', '/', '\\': prec = 9
       of '+', '-', '|', '~': prec = 8
       of '&': prec = 7
       of '.': prec = 6

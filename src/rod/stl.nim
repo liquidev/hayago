@@ -28,6 +28,7 @@ proc println(vm: var RodVM, env: var RodEnv) =
 
 proc numType(vm: var RodVM, env: var RodEnv) =
   var numT = newClass("Num")
+  var rangeT = newClass("Range")
   numT.addMethod("+") do (vm: var RodVM, env: var RodEnv):
     vm[0] = vm[0].numVal + vm[1].numVal
   numT.addMethod("-") do (vm: var RodVM, env: var RodEnv):
@@ -48,7 +49,10 @@ proc numType(vm: var RodVM, env: var RodEnv) =
     vm[0] = vm[0].numVal <= vm[1].numVal
   numT.addMethod(">=") do (vm: var RodVM, env: var RodEnv):
     vm[0] = vm[0].numVal >= vm[1].numVal
-  env["Num"] = newObject(numT)
+  numT.addMethod("..") do (vm: var RodVM, env: var RodEnv):
+    vm[0] = env["Range"].classVal.construct(vm)
+  env["Num"] = numT
+  env["Range"] = rangeT
 
 stl[rsBase] = proc (vm: var RodVM, env: var RodEnv) =
   env["println"] = println

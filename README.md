@@ -19,7 +19,7 @@ class Rod {
   }
 }
 
-Rod::say_hello("world")
+Rod.say_hello("world")
 ```
 
 | **Note** | rod is not finished yet. This readme is a draft of the language's goals. |
@@ -239,6 +239,8 @@ let point_a = Vector(20, 10);
 let point_b = Vector(-30, 10);
 let point_c = point_a + point_b; // use the overloaded operator
 println(f"c = ({point_c.x}, {point_c.y})");
+
+// Traits
 
 trait Hello {
   fn say_hello(target);

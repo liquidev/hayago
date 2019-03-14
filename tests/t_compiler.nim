@@ -9,7 +9,7 @@ import ../src/rod/[
 ]
 import utils
 
-template testCompile*(parseFn: untyped, input: string): untyped =
+template testCompile(parseFn: untyped, input: string): untyped =
   measureTime("compilation") do:
     var
       cp = newCompiler()
@@ -66,6 +66,12 @@ suite "compiler":
       while x < 10 {
         println(x);
         x = x + 1;
+      }
+    """)
+  test "for stmt":
+    testCompile(Script, """
+      for x in 0..10 {
+        println(x);
       }
     """)
   test "scripts":

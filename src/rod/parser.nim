@@ -150,14 +150,17 @@ macro rule(body: untyped): untyped =
 
 proc parseLiteral*() {.rule.} =
   var atom: RodToken
-  if scan.expect(atom, [rtkNull, rtkTrue, rtkFalse, rtkNum, rtkStr]):
+  if scan.expect(atom, [rtkNum, rtkStr]):
     case atom.kind
-    of rtkNull: result = nullNode()
-    of rtkTrue: result = boolNode(true)
-    of rtkFalse: result = boolNode(false)
     of rtkNum: result = numNode(atom.numVal)
     of rtkStr: result = strNode(atom.strVal)
     else: discard
+  elif scan.expectKw(rtkNull):
+    result = nullNode()
+  elif scan.expectKw(rtkTrue):
+    result = boolNode(true)
+  elif scan.expectKw(rtkFalse):
+    result = boolNode(false)
 
 proc parseVar*() {.rule.} =
   var identToken: RodToken
@@ -248,7 +251,7 @@ proc parseInfix*(left: RodNode, op: RodToken) {.rule.} =
 proc parseExpr*(prec: int) {.rule.} =
   var op: RodToken
   result = scan.parsePrefix()
-  op = scan.peekToken(rtkOp)
+  discard scan.expect(op, [rtkOp], peek = true)
   let nextPrec =
     if op.kind == rtkOp: op.prec
     else: 0
@@ -344,18 +347,25 @@ proc parseFor*() {.rule.} =
       let loopIter = scan.parseExpr()
       if not loopIter:
         scan.err("Missing iterator in for loop")
+      let loopBlock = scan.parseBlock(false)
+      if not loopBlock:
+        scan.err("Missing body in for loop")
+      result = node(rnkFor, loopLocal, loopIter, loopBlock)
+    else:
+      scan.err("Missing 'in' in for loop")
 
 proc parseStmt*() {.rule.} =
   result = scan.parseIf(true)
   if not result: result = scan.parseLoop()
   if not result: result = scan.parseWhile()
+  if not result: result = scan.parseFor()
   if not result: result = scan.parseBreak()
   if not result: result = scan.parseContinue()
   if not result:
     result = scan.parseAssign()
     if result:
-      if not (scan.expectLit(rtkEndStmt)):
-        if scan.peekToken([rtkRBrace]).kind != rtkRBrace:
+      if not scan.expectLit(rtkEndStmt):
+        if not scan.expectLit(rtkRBrace, peek = true):
           scan.err("Semicolon ';' expected after expression statement")
       else:
         result = node(rnkStmt, result)

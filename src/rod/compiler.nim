@@ -192,12 +192,18 @@ rule rnkIf:
     chunk.fillPtr(jmp, endLoc)
 
 rule rnkInfix:
-  cp.compile(chunk, node[0])
-  chunk.emitOp(roPushMethod)
-  chunk.emitU16(chunk.sym(node[1].opToken.op))
-  cp.compile(chunk, node[2])
-  chunk.emitOp(roCallMethod)
-  chunk.emitU8(1)
+  case node[1].opToken.op
+  of "||":
+    discard
+  of "&&":
+    discard
+  else:
+    cp.compile(chunk, node[0])
+    chunk.emitOp(roPushMethod)
+    chunk.emitU16(chunk.sym(node[1].opToken.op))
+    cp.compile(chunk, node[2])
+    chunk.emitOp(roCallMethod)
+    chunk.emitU8(1)
 
 rule rnkStmt:
   cp.compile(chunk, node[0])
@@ -227,6 +233,42 @@ rule rnkWhile:
   chunk.emitOp(roJump)
   cp.loop.startJumps.add(chunk.emitPtr(2))
   cp.endLoop(chunk)
+
+rule rnkFor:
+  # don't use globals for this, scope hygiene + better local performance ftw
+  cp.pushScope()
+  # iterator
+  let iterVar = cp.newVar(chunk, "<iter>")
+  cp.compile(chunk, node[1])
+  chunk.emitOp(roPopLocal)
+  chunk.emitU16(iterVar.id)
+  # the loop
+  cp.beginLoop(chunk)
+  # while loop – condition (!iterator.has_next())
+  chunk.emitOp(roPushLocal); chunk.emitU16(iterVar.id)
+  chunk.emitOp(roPushMethod); chunk.emitU16(chunk.sym("has_next"))
+  chunk.emitOp(roCallMethod); chunk.emitU8(0)
+  chunk.emitOp(roJumpCond)
+  # while loop – condition check
+  let jumpcLoc = chunk.emitPtr(2)
+  chunk.emitOp(roJump)
+  cp.loop.endJumps.add(chunk.emitPtr(2))
+  chunk.fillPtr(jumpcLoc, int chunk.off(chunk.pos))
+  # iterator value (iterator.next())
+  let valVar = cp.newVar(chunk, node[0][0].ident)
+  chunk.emitOp(roPushLocal); chunk.emitU16(iterVar.id)
+  chunk.emitOp(roPushMethod); chunk.emitU16(chunk.sym("next"))
+  chunk.emitOp(roCallMethod); chunk.emitU8(0)
+  chunk.emitOp(roPopLocal);   chunk.emitU16(valVar.id)
+  # body (don't use a block here, as it pushes a redundant scope)
+  for n in node[2].sons:
+    cp.compile(chunk, n)
+  # while loop – jump to beginning
+  chunk.emitOp(roJump)
+  cp.loop.startJumps.add(chunk.emitPtr(2))
+  cp.endLoop(chunk)
+  chunk.emitOp(roDiscard) # discard the stored has
+  cp.popScope()
 
 rule rnkBreak:
   if cp.loops.len > 0:

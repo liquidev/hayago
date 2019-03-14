@@ -7,6 +7,7 @@
 import sets
 import tables
 
+import scanner
 import variant
 
 type
@@ -42,6 +43,10 @@ type
     of rvkClass: classVal*: RodClass
     of rvkObj:   objVal*: RodObj
     of rvkFn:    fnVal*: RodBaseFn
+
+  RuntimeError* = object of Exception
+    at*: TextPos
+  TypeError* = object of RuntimeError
 
 #~~
 # Values and their attributes
@@ -83,7 +88,7 @@ proc className*(val: RodValue): string =
     of rvkStr:   "Str"
     of rvkFn:    "Fn"
     of rvkClass: "Class"
-    of rvkObj:  val.objVal.class.name
+    of rvkObj:   val.objVal.class.name
 
 let RodNull* = RodValue(kind: rvkNull)
 
@@ -92,11 +97,38 @@ let RodNull* = RodValue(kind: rvkNull)
 #~~
 
 converter asBool*(val: RodValue): bool =
-  case val.kind
-  of rvkNull: return false
-  of rvkBool: return val.boolVal
-  else: raise newException(ValueError, "The value " & $val & "is not " &
-    "implicitly convertible to a boolean")
+  result =
+    case val.kind
+    of rvkNull: false
+    of rvkBool: val.boolVal
+    else:       true
+
+proc get*[T](val: RodValue): T =
+  when T is bool:
+    if val.kind != rvkBool:
+      raise newException(TypeError, val & " is not a boolean")
+    return val.boolVal
+  elif T is float:
+    if val.kind != rvkNum:
+      raise newException(TypeError, val & " is not a number")
+    return val.numVal
+  elif T is string:
+    if val.kind != rvkStr:
+      raise newException(TypeError, val & " is not a string")
+    return val.strVal
+  elif T is RodClass:
+    if val.kind != rvkClass:
+      raise newException(TypeError, val & " is not a class")
+    return val.classVal
+  elif T is RodObj:
+    if val.kind != rvkObj:
+      raise newException(TypeError, val & " is not an object")
+    return val.objVal
+  else:
+    if val.objVal.userdata.oftype(T):
+      result = val.objVal.userdata.get(T)
+    else:
+      raise newException(TypeError, val & " is not a " & $T)
 
 converter asRodVal*(val: bool): RodValue =
   RodValue(kind: rvkBool, boolVal: val)
