@@ -96,8 +96,10 @@ rod identifiers are sequences of ASCII characters from the following set:
 
 Although rod doesn't strictly enforce them, the following naming conventions
 apply and should be used in idiomatic code:
+
  - use `snake_case` for variable and function names,
  - use `PascalCase` for types (structs, classes and traits),
  - use `lowercase` for module names, to make them OS-independent.
+
 Other naming conventions are allowed, but discouraged—especially in the case of
 public code (libraries, examples, open-source apps).
