@@ -20,6 +20,7 @@ type
   RodClass* = ref object
     name*: string
     methods*: TableRef[string, RodBaseFn]
+    dynamic*: bool
     fields*: HashSet[string]
   RodObj* = ref object
     class*: RodClass
@@ -103,32 +104,20 @@ converter asBool*(val: RodValue): bool =
     of rvkBool: val.boolVal
     else:       true
 
-proc get*[T](val: RodValue): T =
-  when T is bool:
-    if val.kind != rvkBool:
-      raise newException(TypeError, val & " is not a boolean")
-    return val.boolVal
-  elif T is float:
-    if val.kind != rvkNum:
-      raise newException(TypeError, val & " is not a number")
-    return val.numVal
-  elif T is string:
-    if val.kind != rvkStr:
-      raise newException(TypeError, val & " is not a string")
-    return val.strVal
-  elif T is RodClass:
-    if val.kind != rvkClass:
-      raise newException(TypeError, val & " is not a class")
-    return val.classVal
-  elif T is RodObj:
-    if val.kind != rvkObj:
-      raise newException(TypeError, val & " is not an object")
-    return val.objVal
-  else:
-    if val.objVal.userdata.oftype(T):
-      result = val.objVal.userdata.get(T)
+template convert(name, resultT: untyped,
+                 dest: RodValueKind, field: untyped,
+                 errName: string): untyped {.dirty.} =
+  proc name*(val: RodValue): resultT =
+    if val.kind == dest:
+      result = val.field
     else:
-      raise newException(TypeError, val & " is not a " & $T)
+      raise newException(TypeError, val.className & " is not " & errName)
+
+convert num, float, rvkNum, numVal, "a number"
+convert str, string, rvkStr, strVal, "a string"
+convert class, RodClass, rvkClass, classVal, "a class"
+convert obj, RodObj, rvkObj, objVal, "an object"
+convert fn, RodBaseFn, rvkFn, fnVal, "a function"
 
 converter asRodVal*(val: bool): RodValue =
   RodValue(kind: rvkBool, boolVal: val)
@@ -152,11 +141,11 @@ converter asRodVal*(val: RodBaseFn): RodValue =
 # Classes and objects
 #~~
 
-proc newClass*(name: string): RodClass =
+proc newClass*(name: string, dynamic = false): RodClass =
   result = RodClass(
     name: name,
     methods: newTable[string, RodBaseFn](),
-    fields: initSet[string]()
+    dynamic: dynamic, fields: initSet[string]()
   )
 
 proc addFields*(class: var RodClass, names: varargs[string]) =
@@ -169,18 +158,28 @@ proc `[]`*(class: RodClass, methodName: string): RodBaseFn =
 proc `[]=`*(class: var RodClass, methodName: string, impl: RodBaseFn) =
   class.methods[methodName] = impl
 
-proc newObject*(class: RodClass, userdata: Variant): RodObj =
+proc newObject*[T](class: RodClass, userdata: T): RodObj =
   result = RodObj(
     class: class,
     fields: newTable[string, RodValue](),
-    userdata: userdata
+    userdata: newVariant(userdata)
   )
 
 proc newObject*(class: RodClass): RodObj =
   result = newObject(class, newVariant(nil))
 
 proc `[]`*(obj: RodObj, field: string): RodValue =
-  result = obj.fields[field]
+  result =
+    if field in obj.fields:
+      obj.fields[field]
+    else:
+      RodNull
 
 proc `[]=`*(obj: var RodObj, field: string, val: RodValue) =
   obj.fields[field] = val
+
+proc get*(obj: RodObj, T: typedesc): T =
+  result = obj.userdata.get(T)
+
+proc make*[T](obj: var RodObj, data: T) =
+  obj.userdata = newVariant(data)

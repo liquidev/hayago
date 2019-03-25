@@ -8,6 +8,7 @@ import macros
 import sets
 
 import chunk
+import common
 import opcode
 import parser
 import value
@@ -17,19 +18,18 @@ import value
 #~~
 
 type
+  # Basic scoping
   Local = ref object
     name: string
   Scope = ref object
     locals: seq[Local]
-
-#~~
-# Loops
-#~~
-
-type
+  # Loop scopes
   Loop = ref object
     startId, endId: int
     startJumps, endJumps: seq[RodChunkLoc]
+  # Function scopes
+  Fn = ref object
+    nullReturns, valReturns: seq[RodChunkLoc]
 
 #~~
 # Compiler
@@ -39,6 +39,7 @@ type
   RodCompiler* = ref object
     scopes: seq[Scope]
     loops: seq[Loop]
+    fns: seq[Fn]
   CompileError* = object of Exception
 
 proc pushScope(cp: var RodCompiler) =
@@ -70,6 +71,20 @@ proc endLoop(cp: var RodCompiler, chunk: var RodChunk) =
     chunk.fillPtr(p, loop.startId)
   for p in loop.endJumps:
     chunk.fillPtr(p, loop.endId)
+
+proc beginFn(cp: var RodCompiler) =
+  cp.fns.add(Fn())
+
+proc fn(cp: RodCompiler): Fn =
+  cp.fns[^1]
+
+proc fillFnNullReturns(cp: RodCompiler, chunk: var RodChunk) =
+  for p in cp.fn.nullReturns:
+    chunk.fillPtr(p, int chunk.off(chunk.pos))
+
+proc fillFnValReturns(cp: RodCompiler, chunk: var RodChunk) =
+  for p in cp.fn.valReturns:
+    chunk.fillPtr(p, int chunk.off(chunk.pos))
 
 proc resolveVar(cp: RodCompiler, chunk: var RodChunk,
                 name: string): tuple[global: bool, id: uint16] =
@@ -125,7 +140,7 @@ proc compile*(cp: var RodCompiler, chunk: var RodChunk, node: RodNode) =
   if not isNil(rules[node.kind]):
     rules[node.kind](cp, chunk, node)
   else:
-    echo "rod/dev warning: compiling " & $node.kind & " is not implemented"
+    echoWarn("compiling " & $node.kind & " is not implemented")
   chunk.currentPos = oldPos
 
 template rule(nodeKind: RodNodeKind, body: untyped) {.dirty.} =
@@ -162,6 +177,20 @@ rule rnkCall:
   cp.compile(chunk, node[0])
   chunk.emitOp(roCallFn)
   chunk.emitU8(uint8 node[1].sons.len)
+
+rule rnkField:
+  cp.compile(chunk, node[0])
+  chunk.emitOp(roPushField)
+  chunk.emitU16(chunk.sym(node[1].ident))
+
+rule rnkMethod:
+  cp.compile(chunk, node[0])
+  chunk.emitOp(roPushMethod)
+  chunk.emitU16(chunk.sym(node[1].ident))
+  for n in node[2].sons:
+    cp.compile(chunk, n)
+  chunk.emitOp(roCallMethod)
+  chunk.emitU8(uint8 node[2].sons.len)
 
 rule rnkPrefix:
   cp.compile(chunk, node[0])
@@ -252,42 +281,6 @@ rule rnkWhile:
   cp.loop.startJumps.add(chunk.emitPtr(2))
   cp.endLoop(chunk)
 
-rule rnkFor:
-  # don't use globals for this, scope hygiene + better local performance ftw
-  cp.pushScope()
-  # iterator
-  let iterVar = cp.newVar(chunk, "<iter>")
-  cp.compile(chunk, node[1])
-  chunk.emitOp(roPopLocal)
-  chunk.emitU16(iterVar.id)
-  # the loop
-  cp.beginLoop(chunk)
-  # while loop – condition (!iterator.has_next())
-  chunk.emitOp(roPushLocal); chunk.emitU16(iterVar.id)
-  chunk.emitOp(roPushMethod); chunk.emitU16(chunk.sym("has_next"))
-  chunk.emitOp(roCallMethod); chunk.emitU8(0)
-  chunk.emitOp(roJumpCond)
-  # while loop – condition check
-  let jumpcLoc = chunk.emitPtr(2)
-  chunk.emitOp(roJump)
-  cp.loop.endJumps.add(chunk.emitPtr(2))
-  chunk.fillPtr(jumpcLoc, int chunk.off(chunk.pos))
-  # iterator value (iterator.next())
-  let valVar = cp.newVar(chunk, node[0][0].ident)
-  chunk.emitOp(roPushLocal); chunk.emitU16(iterVar.id)
-  chunk.emitOp(roPushMethod); chunk.emitU16(chunk.sym("next"))
-  chunk.emitOp(roCallMethod); chunk.emitU8(0)
-  chunk.emitOp(roPopLocal);   chunk.emitU16(valVar.id)
-  # body (don't use a block here, as it pushes a redundant scope)
-  for n in node[2].sons:
-    cp.compile(chunk, n)
-  # while loop – jump to beginning
-  chunk.emitOp(roJump)
-  cp.loop.startJumps.add(chunk.emitPtr(2))
-  cp.endLoop(chunk)
-  chunk.emitOp(roDiscard) # discard the stored has
-  cp.popScope()
-
 rule rnkBreak:
   if cp.loops.len > 0:
     chunk.emitOp(roJump)
@@ -301,6 +294,13 @@ rule rnkContinue:
     cp.loop.startJumps.add(chunk.emitPtr(2))
   else:
     node.err("continue cannot be used outside of a loop")
+
+rule rnkReturn:
+  if node.sons.len > 0:
+    cp.compile(chunk, node[0])
+    cp.fn.valReturns.add(chunk.emitPtr(2))
+  else:
+    cp.fn.nullReturns.add(chunk.emitPtr(2))
 
 rule rnkLet:
   for a in node.sons:
@@ -317,12 +317,14 @@ rule rnkLet:
 
 rule rnkAssign:
   cp.compile(chunk, node[1])
-  if node[0].kind != rnkVar:
+  case node[0].kind
+  of rnkVar:
+    let rvar = cp.resolveVar(chunk, node[0][0].ident)
+    if rvar.global: chunk.emitOp(roStoreGlobal)
+    else: chunk.emitOp(roStoreLocal)
+    chunk.emitU16(rvar.id)
+  else:
     node[0].err("Invalid left hand side of assignment")
-  let rvar = cp.resolveVar(chunk, node[0][0].ident)
-  if rvar.global: chunk.emitOp(roStoreGlobal)
-  else: chunk.emitOp(roStoreLocal)
-  chunk.emitU16(rvar.id)
 
 rule rnkBlock:
   cp.pushScope()
@@ -333,4 +335,8 @@ rule rnkBlock:
 rule rnkScript:
   for n in node.sons:
     cp.compile(chunk, n)
+  cp.fillFnNullReturns(chunk)
+  chunk.emitOp(roPushConst)
+  chunk.emitU16(chunk.id(RodNull))
+  cp.fillFnValReturns(chunk)
   chunk.emitOp(roReturn)

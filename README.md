@@ -10,12 +10,8 @@ with a modern, Rust-like syntax.
 ```rust
 // main.rod
 class Rod {
-  fn say_hello(target) {
+  pub fn say_hello(target) {
     println(f"Hello, {target}!")
-  }
-
-  export {
-    say_hello()
   }
 }
 
@@ -167,6 +163,18 @@ loop {
 for i in 1..10 {
   println(f"{i}"); // prints 1 through 10
 }
+
+// comprehensions
+let sequence = ["hello", true, 3.141592];
+let str_seq = [
+  seq1 |x| { x.to_str() }
+];
+println(strs); // ["hello", "true", "3.141592"]
+let table = { hello: "world", fun: true, pi: 3.141592 };
+let str_tab = {
+  table |k, v| { (k, v.to_str()) }
+};
+println(str_tab); // { "hello": "world", "fun": "true", "pi": "3.141592" }
 ```
 
 ```rust
@@ -199,15 +207,17 @@ println(f"position = {position}");
 
 // structs cannot have their own methods, but classes can:
 class Vector {
-  let x, y;
+  let pub x, y;
 
   // constructors
-  fn .ctor(self, x, y) {
+  pub fn .ctor(self, x, y) {
     self.x = x;
     self.y = y;
   }
 
   // instance methods
+  // methods without 'pub' are private, that means they're only accessible from
+  // within the declaring class
   fn add(self, other) {
     return Self(self.x + other.x, self.y + other.y);
   }
@@ -219,19 +229,12 @@ class Vector {
   // operator overloading
   // overloaded operators cannot have a `self` argument because they are not
   // instance methods
-  fn a + b {
+  pub fn a + b {
     return a.add(b);
   }
 
-  fn a - b {
+  pub fn a - b {
     return a.sub(b);
-  }
-
-  // an export block makes certain fields and methods public
-  export {
-    x, y,
-    // methods are exported with an extra (), to distinguish them from fields
-    +(), -()
   }
 }
 
@@ -243,11 +246,7 @@ println(f"c = ({point_c.x}, {point_c.y})");
 // Traits
 
 trait Hello {
-  fn say_hello(target);
-
-  export {
-    say_hello(1)
-  }
+  pub fn say_hello(target);
 }
 
 class Greeter {}

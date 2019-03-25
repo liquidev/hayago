@@ -4,6 +4,10 @@
 # licensed under the MIT license
 #~~
 
+## rod uses a recursive descent parser. It's very straightforward, but it isn't
+## the fastest in its class—many optimizations could be done (like a full
+## table-based Pratt parser for expressions), but that's out of scope for now.
+
 import deques
 import macros
 
@@ -11,6 +15,10 @@ import scanner
 import strutils
 
 export scanner.TextPos
+
+#~~
+# Nodes
+#~~
 
 type
   RodNodeKind* = enum
@@ -26,14 +34,16 @@ type
     rnkPrefix, rnkInfix
     rnkAssign
     rnkCall
+    rnkField, rnkMethod
     # flow control
     rnkIf, rnkIfBranch
-    rnkLoop, rnkWhile, rnkFor
+    rnkLoop, rnkWhile
     rnkBreak, rnkContinue
+    rnkReturn
     # variables
     rnkVar
     # declarations
-    rnkLet
+    rnkLet, rnkFn
   RodNodeObj {.acyclic.} = object
     case kind*: RodNodeKind
     # terminal nodes
@@ -51,7 +61,7 @@ type
     RodNode(kind: k).sons is seq[RodNode]
 
 const
-  ExprNodes = {
+  RodExprNodes* = {
     rnkNull, rnkBool, rnkNum, rnkStr,
     rnkPrefix, rnkInfix, rnkAssign,
     rnkCall,
@@ -59,7 +69,7 @@ const
     rnkVar
   }
 
-proc `$`*(node: RodNode, pretty: bool = true): string =
+proc `$`*(node: RodNode, pretty = true, showPos = false): string =
   case node.kind
   of rnkNull:  result = "#null"
   of rnkBool:  result = "#" & $node.boolVal
@@ -72,17 +82,19 @@ proc `$`*(node: RodNode, pretty: bool = true): string =
     result.add(($node.kind)[3..<len($node.kind)])
     for node in node.sons:
       if pretty:
-        let stringified = `$`(node, pretty)
+        let stringified = `$`(node, pretty, showPos)
         if stringified[0] == '(':
           result.add("\n")
-          result.add(indent(`$`(node, pretty), 2))
+          result.add(indent(`$`(node, pretty, showPos), 2))
         else:
           result.add(" ")
           result.add(stringified)
       else:
         result.add(" ")
-        result.add(`$`(node, pretty))
+        result.add(`$`(node, pretty, showPos))
     result.add(")")
+  if showPos:
+    result.add(" at " & $node.textPos.ln & ":" & $node.textPos.col)
 
 proc `[]`*(node: RodNode, index: int): RodNode =
   node.sons[index]
@@ -114,6 +126,22 @@ proc node*(kind: RodBranchNodeKind, children: varargs[RodNode]): RodNode =
   result = RodNode(kind: kind)
   result.sons.add(children)
 
+proc by*(node: RodNode, scan: RodScanner): RodNode =
+  result = node
+  result.pos = scan.pos
+  result.textPos = scan.textPos
+
+proc methodNode*(scan: RodScanner, target: RodNode,
+                 name: string, args: varargs[RodNode]): RodNode =
+  result = node(rnkMethod,
+    target,
+    identNode(name).by(scan), node(rnkList, args).by(scan))
+  .by(scan)
+
+#~~
+# The parser
+#~~
+
 template sandbox(body: untyped): untyped {.dirty.} =
   let
     pos = scan.pos
@@ -129,10 +157,10 @@ template sandbox(body: untyped): untyped {.dirty.} =
     result.textPos = textPos
 
 macro rule(body: untyped): untyped =
-  ## The rule macro adds a `scan: var RodScanner` parameter to the target proc
-  ## and wraps its body in a `sandbox` call. It also sets ``RodNode`` as the
-  ## proc's return type.
-  ## The macro is supposed to be used as a pragma ``{.rule.}`` .
+  ## Adds a `scan: var RodScanner` parameter to the target proc and wraps its \
+  ## body in a ``sandbox`` call. It also sets the proc's return type to \
+  ## ``RodNode``.
+  ## The macro is supposed to be used as a pragma (``{.rule.}``).
   let
     procStmts = body[6]
     procArgs = body[3]
@@ -148,6 +176,23 @@ macro rule(body: untyped): untyped =
   if procStmts.kind != nnkEmpty: body[6] = newStmts
   return body
 
+proc delim(scan: var RodScanner,
+           start, del, fin: RodTokenKind,
+           destKind: RodNodeKind,
+           parser: proc (scan: var RodScanner): RodNode): RodNode =
+  if scan.expectLit(start):
+    var elem = @[parser(scan)]
+    while scan.expectLit(del) and not scan.atEnd():
+      elem.add(parser(scan))
+      if scan.expectLit(fin):
+        break
+    if elem.len > 0 and elem[0]:
+      result = node(destKind, elem).by(scan)
+    else:
+      result = node(destKind).by(scan)
+  else:
+    result = emptyNode().by(scan)
+
 proc parseLiteral*() {.rule.} =
   var atom: RodToken
   if scan.expect(atom, [rtkNum, rtkStr]):
@@ -162,6 +207,11 @@ proc parseLiteral*() {.rule.} =
   elif scan.expectKw(rtkFalse):
     result = boolNode(false)
 
+proc parseIdent*() {.rule.} =
+  var identToken: RodToken
+  if scan.expect(identToken, [rtkIdent]):
+    result = identNode(identToken.ident)
+
 proc parseVar*() {.rule.} =
   var identToken: RodToken
   if scan.expect(identToken, [rtkIdent]):
@@ -172,22 +222,31 @@ proc parseExpr*(prec: int) {.rule.}
 proc parseExpr*() {.rule.} =
   result = scan.parseExpr(0)
 
-proc parseBlock*(implicitReturn: static[bool]) {.rule.}
+type
+  BlockParseMode = enum
+    bpExpr
+    bpStmt
+    bpFn
+
+proc parseBlock*(mode: static[BlockParseMode]) {.rule.}
 
 proc parseDo*() {.rule.} =
   if scan.expectKw(rtkDo):
-    result = scan.parseBlock(true)
+    result = scan.parseBlock(bpExpr)
     if not result:
       scan.err("Missing block in do block")
 
 # Gosh, I went through 3 different iterations of if statement parsing
 # until I landed on this one. The main advantage is that it's really small,
 # and pretty fast (the other ones' performance didn't satisfy me)
-proc parseIf*(isStmt: static[bool], allowElse: static[bool] = true) {.rule.} =
+proc parseIf*(isStmt: static[bool], allowElse: static[bool] = false) {.rule.} =
   if scan.expectKw(rtkIf):
     var ifStmt = @[
       scan.parseExpr(),
-      scan.parseBlock(not isStmt)
+      scan.parseBlock(
+        if isStmt: bpStmt
+        else: bpExpr
+      )
     ]
     if not ifStmt[0]: scan.err("If condition expected")
     if not ifStmt[1]: scan.err("If branch expected")
@@ -214,16 +273,27 @@ proc parseAtom*() {.rule.} =
 
 proc parseCall*(left: RodNode) {.rule.} =
   if scan.expectLit(rtkLParen):
-    var args: seq[RodNode]
-    while not scan.atEnd():
-      let arg = scan.parseExpr()
-      if arg: args.add(arg)
-      if not scan.expectLit(rtkComma):
-        break
-    if scan.expectLit(rtkRParen):
-      result = scan.parseCall(node(rnkCall, left, node(rnkList, args)))
+    var args = scan.delim(rtkLParen, rtkComma, rtkRParen, rnkList, parseExpr)
+    if args:
+      result = scan.parseCall(node(rnkCall, left, args))
     else:
       scan.err("Missing right paren ')'")
+  else:
+    result = left
+
+proc parseAccess*(left: RodNode) {.rule.} =
+  if scan.expectOp(rtkDot):
+    let fieldName = scan.parseIdent()
+    if fieldName:
+      let field = node(rnkField, left, fieldName)
+      let call = scan.parseCall(field)
+      if call.kind == rnkCall:
+        result = scan.parseAccess(
+          node(rnkMethod, left, fieldName, call[1]).by(scan))
+      else:
+        result = field
+    else:
+      scan.err("Field access or method call expected")
   else:
     result = left
 
@@ -233,16 +303,16 @@ proc parsePrefix*() {.rule.} =
     if not scan.ignore():
       let
         opNode = opNode(opToken)
-        rightNode = scan.parseCall(scan.parseAtom())
+        rightNode = scan.parseAccess(scan.parseCall(scan.parseAtom()))
       result = node(rnkPrefix, rightNode, opNode)
   else:
-    result = scan.parseCall(scan.parseAtom())
+    result = scan.parseAccess(scan.parseCall(scan.parseAtom()))
 
 # I can't believe how Pratt parsing can be done in this few lines of code.
-# https://gist.github.com/liquid600pgm/5d0673f40223a312cc5f91e969660060#parsing
-# This gist contains some useful programming resources.
-# Check out the 'Pratt parsing' link here for some insights on how it can be
-# implemented.
+# rod's Pratt parser consists of two following functions. Unfortunately, a more
+# optimized table-based solution is impossible, because rod uses context-based
+# scanning, which doesn't play well with Pratt parsing.
+# A better, faster solution might be considered in the future.
 
 proc parseInfix*(left: RodNode, op: RodToken) {.rule.} =
   let right = scan.parseExpr(op.prec - (1 - ord(op.leftAssoc)))
@@ -264,7 +334,7 @@ proc parseExpr*(prec: int) {.rule.} =
 
 proc parseAssign*() {.rule.} =
   let left = scan.parseExpr()
-  if scan.expectLit(rtkEq):
+  if scan.expectOp(rtkEq):
     let right = scan.parseExpr()
     if right.kind != rnkNone:
       result = node(rnkAssign, left, right)
@@ -272,31 +342,38 @@ proc parseAssign*() {.rule.} =
     result = left
 
 proc parseLet*() {.rule.} =
-  # ahh, variable declarations. so simple yet so complex
   if scan.expectKw(rtkLet):
     var assignments: seq[RodNode]
     while true:
-      let assign = scan.parseAssign()
-      var left, right: RodNode
-      if assign.kind != rnkNone:
-        if assign.kind == rnkVar:
-          left = assign
-          right = nullNode()
-        elif assign.kind == rnkAssign:
-          if assign[0].kind != rnkVar:
-            scan.err(
-              "Left-hand side of variable assignment must be an identifier")
-          left = assign[0]
-          right = assign[1]
-        else:
-          scan.err("Identifier expected")
-      assignments.add(node(rnkAssign, left, right))
+      let left = scan.parseVar()
+      if not left:
+        scan.err("Variable name expected")
+      if scan.expectOp(rtkEq):
+        let right = scan.parseExpr()
+        if not right:
+          scan.err("Expression expected")
+        assignments.add(node(rnkAssign, left, right))
+      else:
+        assignments.add(node(rnkAssign, left, nullNode()))
       if not scan.expectLit(rtkComma):
         break
-    if scan.expectLit(rtkEndStmt):
-      result = node(rnkLet, assignments)
+    if assignments.len > 0:
+      if scan.expectLit(rtkEndStmt):
+        result = node(rnkLet, assignments)
+      else:
+        scan.err("Semicolon ';' expected after variable declaration")
     else:
-      scan.err("Semicolon ';' expected after variable declaration")
+      scan.err("Assignments expected")
+
+proc parseFn*() {.rule.} =
+  if scan.expectKw(rtkFn):
+    let fnName = scan.parseIdent()
+    if not fnName: scan.err("Function name expected")
+    let args = scan.delim(rtkLParen, rtkComma, rtkRParen, rnkList, parseExpr)
+    if not args: scan.err("Function arguments expected")
+    let impl = scan.parseBlock(bpFn)
+    if not impl: scan.err("Function implementation expected")
+    result = node(rnkFn, fnName, args, impl)
 
 proc parseBreak*() {.rule.} =
   if scan.expectKw(rtkBreak):
@@ -312,9 +389,19 @@ proc parseContinue*() {.rule.} =
     else:
       scan.err("Semicolon ';' expected after continue statement")
 
+proc parseReturn*() {.rule.} =
+  if scan.expectKw(rtkReturn):
+    let exp = scan.parseExpr()
+    if exp:
+      result = node(rnkReturn, exp)
+    else:
+      result = node(rnkReturn)
+    if not scan.expectLit(rtkEndStmt):
+      scan.err("Semicolon ';' expected after return statement")
+
 proc parseLoop*() {.rule.} =
   if scan.expectKw(rtkLoop):
-    let loopBlock = scan.parseBlock(false)
+    let loopBlock = scan.parseBlock(bpStmt)
     if not loopBlock:
       scan.err("Missing block in loop statement")
     if scan.expectKw(rtkWhile):
@@ -333,12 +420,14 @@ proc parseWhile*() {.rule.} =
     let loopCheck = scan.parseExpr()
     if not loopCheck:
       scan.err("Missing condition in while loop")
-    let loopBlock = scan.parseBlock(false)
+    let loopBlock = scan.parseBlock(bpStmt)
     if not loopBlock:
       scan.err("Missing block in while loop")
     result = node(rnkWhile, loopCheck, loopBlock)
 
 proc parseFor*() {.rule.} =
+  ## A ``for`` loop is just some syntactic sugar over a ``while`` loop.
+  ## This is why it produces a block node, and not a distinct for node.
   if scan.expectKw(rtkFor):
     let loopLocal = scan.parseVar()
     if not loopLocal:
@@ -347,10 +436,24 @@ proc parseFor*() {.rule.} =
       let loopIter = scan.parseExpr()
       if not loopIter:
         scan.err("Missing iterator in for loop")
-      let loopBlock = scan.parseBlock(false)
-      if not loopBlock:
-        scan.err("Missing body in for loop")
-      result = node(rnkFor, loopLocal, loopIter, loopBlock)
+      let iterV = node(rnkVar, identNode(":iter")).by(scan)
+      var loopBlock = scan.parseBlock(bpStmt)
+      loopBlock.sons.insert(
+        node(rnkLet, node(rnkAssign, loopLocal,
+          scan.methodNode(iterV, "get"))
+        ).by(scan),
+        0
+      )
+      loopBlock.sons.add(
+        node(rnkStmt, scan.methodNode(iterV, "next")).by(scan)
+      )
+      result = node(rnkBlock,
+        node(rnkLet, node(rnkAssign, iterV,
+          scan.methodNode(loopIter, "iterate")).by(scan)).by(scan),
+        node(rnkWhile,
+          scan.methodNode(iterV, "has_next"),
+          loopBlock).by(scan)
+      )
     else:
       scan.err("Missing 'in' in for loop")
 
@@ -361,6 +464,7 @@ proc parseStmt*() {.rule.} =
   if not result: result = scan.parseFor()
   if not result: result = scan.parseBreak()
   if not result: result = scan.parseContinue()
+  if not result: result = scan.parseReturn()
   if not result:
     result = scan.parseAssign()
     if result:
@@ -369,13 +473,13 @@ proc parseStmt*() {.rule.} =
           scan.err("Semicolon ';' expected after expression statement")
       else:
         result = node(rnkStmt, result)
-  if not result: result = scan.parseBlock(false)
+  if not result: result = scan.parseBlock(bpStmt)
 
 proc parseDecl*() {.rule.} =
   result = scan.parseLet()
   if not result: result = scan.parseStmt()
 
-proc parseBlock*(implicitReturn: static[bool]) {.rule.} =
+proc parseBlock*(mode: static[BlockParseMode]) {.rule.} =
   if scan.expectLit(rtkLBrace):
     var nodes: seq[RodNode]
     while not scan.atEnd():
@@ -383,9 +487,12 @@ proc parseBlock*(implicitReturn: static[bool]) {.rule.} =
       nodes.add(decl)
       if scan.expectLit(rtkRBrace):
         break
-    when implicitReturn:
-      if nodes[^1].kind notin ExprNodes:
+    when mode == bpExpr:
+      if nodes[^1].kind notin RodExprNodes:
         scan.err("Block must have a result")
+    elif mode == bpFn:
+      if nodes[^1].kind in RodExprNodes:
+        nodes[^1] = node(rnkReturn, nodes[^1])
     result = node(rnkBlock, nodes)
 
 proc parseScript*() {.rule.} =

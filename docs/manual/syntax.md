@@ -16,10 +16,43 @@ rod features single-line, and multi-line comments:
  */
 ```
 
+## Keywords
+
+rod has the following keywords:
+
+```
+break continue do else for if in loop return while
+fn let
+pub use
+null true false
+is
+```
+
+Keep in mind that those keywords are *not quite* reserved, but when you do use
+them as identifiers, do so with care. Keywords are banned as identifiers where:
+ - A statement starts with a keyword.
+ - (more strict rules may be added in the future)
+
+For instance, this will compile and run properly:
+
+```rust
+fn return(x) {
+  x
+}
+
+let useless = return(2);
+```
+
+But this will not:
+
+```rust
+let return = 10;
+return = 2; // error: expression expected after 'return'
+```
+
 ## Literals
 
-The core syntax is comprised of literals. They're the smallest AST node,
-and so, are leaf (non-terminal) nodes.
+The core syntax is comprised of literals. Literals are non-terminal AST nodes.
 
 ### Null
 
@@ -30,8 +63,11 @@ intentionally left uninitialized.
 
 ### Booleans
 
-rod has a standard, distinct boolean type. Its value is either `true` or
-`false`. Nothing too fancy.
+rod has a standard, boolean type. Its value is either `true` or `false`.
+In logic comparison and branching, `true` is always "truthy", and `false` is
+always falsey.
+
+`null` the only other falsey value. All other values are truthy.
 
 ### Numbers
 
@@ -50,3 +86,18 @@ In rod, strings are simply enclosed in `""`:
 ```
 As of now, string literals don't have any special features, like escape
 sequences, but that is subject to change.
+
+### Identifiers
+
+rod identifiers are sequences of ASCII characters from the following set:
+```nim
+{ 'a'..'z', 'A'..'Z', '0'..'9', '_' }
+```
+
+Although rod doesn't strictly enforce them, the following naming conventions
+apply and should be used in idiomatic code:
+ - use `snake_case` for variable and function names,
+ - use `PascalCase` for types (structs, classes and traits),
+ - use `lowercase` for module names, to make them OS-independent.
+Other naming conventions are allowed, but discouraged—especially in the case of
+public code (libraries, examples, open-source apps).

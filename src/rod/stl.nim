@@ -10,6 +10,12 @@ import vm
 type
   RodLib* = enum
     rsBase
+  RodRange* = ref object
+    min, max, index: float
+
+template on(class, fn, body: untyped): untyped {.dirty.} =
+  class.addMethod(fn) do (vm: var RodVM, env: var RodEnv):
+    body
 
 var stl: array[low(RodLib)..high(RodLib),
   proc (vm: var RodVM, env: var RodEnv) {.nimcall.}]
@@ -26,34 +32,47 @@ proc println(vm: var RodVM, env: var RodEnv) =
       print.add(' ')
   echo print
 
-proc numType(vm: var RodVM, env: var RodEnv) =
+proc numTypes(vm: var RodVM, env: var RodEnv) =
   var numT = newClass("Num")
-  var rangeT = newClass("Range")
-  numT.addMethod("+") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal + vm[1].numVal
-  numT.addMethod("-") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal - vm[1].numVal
-  numT.addMethod("*") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal * vm[1].numVal
-  numT.addMethod("/") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal / vm[1].numVal
-  numT.addMethod("==") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal == vm[1].numVal
-  numT.addMethod("!=") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal != vm[1].numVal
-  numT.addMethod("<") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal < vm[1].numVal
-  numT.addMethod(">") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal > vm[1].numVal
-  numT.addMethod("<=") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal <= vm[1].numVal
-  numT.addMethod(">=") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = vm[0].numVal >= vm[1].numVal
-  numT.addMethod("..") do (vm: var RodVM, env: var RodEnv):
-    vm[0] = env["Range"].classVal.construct(vm)
+  numT.on("+"): vm[0] = vm[0].num + vm[1].num
+  numT.on("-"): vm[0] = vm[0].num - vm[1].num
+  numT.on("*"): vm[0] = vm[0].num * vm[1].num
+  numT.on("/"): vm[0] = vm[0].num / vm[1].num
+  numT.on("=="): vm[0] = vm[0].num == vm[1].num
+  numT.on("!="): vm[0] = vm[0].num != vm[1].num
+  numT.on("<"): vm[0] = vm[0].num < vm[1].num
+  numT.on(">"): vm[0] = vm[0].num > vm[1].num
+  numT.on("<="): vm[0] = vm[0].num <= vm[1].num
+  numT.on(">="): vm[0] = vm[0].num >= vm[1].num
+  numT.on(".."):
+    vm[3] = true
+    vm[0] = env["Range"].class.construct(vm)
+  numT.on("..."):
+    vm[3] = false
+    vm[0] = env["Range"].class.construct(vm)
   env["Num"] = numT
+
+  var rangeT = newClass("Range")
+  rangeT.on(".ctor"):
+    var rObj = vm[0].obj
+    rObj.make(
+      RodRange(
+        min: vm[1].num, max: vm[2].num,
+        index: 0
+      )
+    )
+    vm[0] = rObj
+  rangeT.on("has_next"):
+    let r = vm[0].obj.get(RodRange)
+    vm[0] = r.index >= r.max
+  rangeT.on("get"):
+    vm[0] = vm[0].obj.get(RodRange).index
+  rangeT.on("next"):
+    var r = vm[0].obj.get(RodRange)
+    r.index += 1
+    vm[0] = RodNull
   env["Range"] = rangeT
 
 stl[rsBase] = proc (vm: var RodVM, env: var RodEnv) =
   env["println"] = println
-  numType(vm, env)
+  numTypes(vm, env)

@@ -26,8 +26,10 @@ type
     rtkFor = "for", rtkIn = "in"
     rtkBreak = "break", rtkContinue = "continue"
     rtkDo = "do"
+    rtkReturn = "return"
     # declarations
     rtkLet = "let"
+    rtkFn = "fn"
     # types
     rtkNull = "null"
     rtkTrue = "true", rtkFalse = "false"
@@ -35,6 +37,7 @@ type
     # operators
     rtkDot = ".", rtkEq = "="
     rtkColon = ":", rtkDColon = "::"
+    rtkIs = "is"
     rtkOp, rtkIdent
   RodToken* = object
     case kind*: RodTokenKind
@@ -58,14 +61,13 @@ type
 proc atEnd*(scan: RodScanner): bool =
   scan.pos >= scan.input.len
 
-proc textPos*(scan: var RodScanner): TextPos =
+proc textPos*(scan: RodScanner): TextPos =
   var ln, col = 0
-  if not scan.atEnd():
-    for l in splitLines(scan.input[0..scan.pos]):
-      col = 0
-      for c in l:
-        col += 1
-      ln += 1
+  for l in splitLines(scan.input[0..min(scan.pos, scan.input.len - 1)]):
+    col = 0
+    for c in l:
+      col += 1
+    ln += 1
   return (ln, col)
 
 proc err*(scan: var RodScanner, msg: string) =
@@ -192,6 +194,24 @@ proc expectKw*(scan: var RodScanner, kw: RodTokenKind,
   when peek:
     scan.goto(lastPos)
 
+proc scanOp*(scan: var RodScanner,
+             allowReserved: bool = false): RodToken
+
+proc expectOp*(scan: var RodScanner, op: RodTokenKind,
+               peek: static[bool] = false): bool =
+  ## ``expectKw``, but for operators.
+  let lastPos = scan.pos
+  scan.ignore()
+  var opToken = scan.scanOp(true)
+  if opToken.kind != rtkNone:
+    let eq = opToken.op == $op
+    if eq:
+      result = true
+    else:
+      scan.goto(lastPos)
+  when peek:
+    scan.goto(lastPos)
+
 proc nextToken*(scan: var RodScanner,
                 expected: varargs[RodTokenKind]): RodToken =
   if scan.expect(result, expected):
@@ -243,18 +263,21 @@ const
   OperatorChars = {
     '=', '+', '-', '*', '/', '<', '>',
     '@', '$', '~', '&', '%', '|',
-    '!', '?', '^', '.', ':', '\\',
-    'a'..'z'
+    '!', '?', '^', '.', ':', '\\'
   }
   ReservedOps = [
     ".", "=", ":", "::"
   ]
 
-rule rtkOp:
+proc scanOp*(scan: var RodScanner,
+             allowReserved: bool = false): RodToken =
   var op = ""
-  while scan.peek(1)[0] in OperatorChars:
-    op.add(scan.consume(1))
-  if op != "" and op notin ReservedOps:
+  if scan.expectKw(rtkIs): op = "is"
+  elif scan.expectKw(rtkIn): op = "in"
+  else:
+    while scan.peek(1)[0] in OperatorChars:
+      op.add(scan.consume(1))
+  if op != "" and (op notin ReservedOps or allowReserved):
     var
       prec = -1
       leftAssoc = true
@@ -285,6 +308,9 @@ rule rtkOp:
         kind: rtkOp, op: op,
         prec: prec, leftAssoc: leftAssoc
       )
+
+rule rtkOp:
+  result = scan.scanOp(false)
 
 rule rtkIdent:
   var ident = ""

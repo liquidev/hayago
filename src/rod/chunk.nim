@@ -149,7 +149,8 @@ proc disassemble*(chunk: RodChunk): string =
       result.add($+chunk.consts[int chunk.readU16(pc)])
       pc += 2
     of roNewGlobal, roPushGlobal, roPopGlobal, roStoreGlobal,
-       roPushMethod:
+      roPushField, roPopField, roStoreField,
+      roPushMethod:
       result.add($chunk.symbols[int chunk.readU16(pc)])
       pc += 2
     of roPushLocal, roPopLocal, roStoreLocal:

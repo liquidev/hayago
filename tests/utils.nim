@@ -2,7 +2,7 @@ import times
 
 proc measureTime*(name: string, body: proc ()) =
   ## General tine measuring utility
-  let start = cpuTime()
+  let start = epochTime()
   body()
-  let duration = cpuTime() - start
+  let duration = epochTime() - start
   echo name, " took ", duration * 1000, " ms"

@@ -18,7 +18,7 @@ template testCompile(parseFn: untyped, input: string): untyped =
   measureTime("parsing") do:
     ast = `parse parseFn`(scan)
   echo "ast:"
-  echo ($ast).indent(2)
+  echo (`$`(ast)).indent(2)
   measureTime("compilation") do:
     cp.compile(chunk, ast)
   echo chunk
@@ -89,5 +89,5 @@ suite "compiler":
     """)
   test "scripts":
     testCompile(Script, """
-      print(2 + 2);
+      print(2.sin().atan());
     """)

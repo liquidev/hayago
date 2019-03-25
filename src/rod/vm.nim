@@ -4,10 +4,14 @@
 # licensed under the MIT license
 #~~
 
-import chunk
-import opcode
-import scanner
+import sets
 import tables
+
+import chunk
+import compiler
+import opcode
+import parser
+import scanner
 import value
 
 type
@@ -17,11 +21,18 @@ type
 
   RodEnv* = ref object
     globals: TableRef[string, RodValue]
+  RodModule* = ref object
+    mainChunk*: RodChunk
+    env*: RodEnv
+    exports*: HashSet[string]
   RodVM* = ref object
-    stack, locals, slots: seq[RodValue]
+    modules*: TableRef[string, RodModule]
+    globalModules: HashSet[string]
+    stack, slots: seq[RodValue]
     callStack: seq[Call]
 
   Call = ref object
+    locals: seq[RodValue]
     env*: RodEnv
     case isModMain: bool
     of false:
@@ -194,7 +205,15 @@ proc runCall(vm: var RodVM): RodValue =
       else:
         vm.err(TypeError, "Cannot reference undeclared global '" & name & "'")
     of roPushLocal:
-      vm.push(vm.locals[int call.readU16()])
+      vm.push(call.locals[int call.readU16()])
+    of roPushField:
+      let
+        obj = vm.peek().obj()
+        name = chunk.symbols[int call.readU16()]
+      if obj.class.dynamic or name in obj.class.fields:
+        discard
+      else:
+        vm.err(TypeError, obj.className & " doesn't have the field '" & name & "'")
 
     of roDiscard:
       discard vm.pop()
@@ -212,11 +231,17 @@ proc runCall(vm: var RodVM): RodValue =
         vm.err(TypeError, "Cannot store undeclared global '" & name & "'")
     of roPopLocal, roStoreLocal:
       let id = int call.readU16()
-      if id <= vm.locals.len:
-        vm.locals.setLen(id + 1)
-      vm.locals[id] = case op
+      if id <= call.locals.len:
+        call.locals.setLen(id + 1)
+      call.locals[id] = case op
         of roPopLocal: vm.pop()
         else: vm.peek()
+    of roPopField, roStoreField:
+      let
+        obj = vm.peek().obj
+
+    of roIntoBool:
+      vm.push(vm.pop().asBool())
 
     # functions, methods and calls
     of roPushMethod:
@@ -259,8 +284,11 @@ proc runCall(vm: var RodVM): RodValue =
     # flow control
     of roJump:
       call.jump(chunk.offsets[int call.readU16()])
-    of roJumpCond:
-      let condition = vm.pop()
+    of roJumpCond, roJumpShort:
+      let condition =
+        case op
+        of roJumpCond: vm.pop()
+        else: vm.peek()
       if condition:
         call.jump(chunk.offsets[int call.readU16()])
       else:
@@ -271,19 +299,33 @@ proc runCall(vm: var RodVM): RodValue =
       else:
         return RodNull
 
-proc interpret*(vm: var RodVM, env: var RodEnv, chunk: RodChunk): RodValue =
-  vm.enterCall(initCall(env)
+proc addModule*(vm: var RodVM, name: string,
+                global: bool = false, chunk: RodChunk = nil) =
+  vm.modules["name"] = RodModule(
+    mainChunk: chunk,
+    env: newEnv(),
+    exports: initSet[string]()
+  )
+
+proc runModule*(vm: var RodVM, name: string): RodValue =
+  var module = vm.modules[name]
+  vm.enterCall(initCall(module.env)
     .modMain()
-    .setChunk(chunk))
+    .setChunk(module.mainChunk))
   result = vm.runCall()
   vm.exitCall()
 
+proc eval*(vm: var RodVM, module: string, script: string): RodValue =
+  var
+    cp = newCompiler()
+    chunk = newChunk()
+    scan = newScanner(script)
+  cp.compile(chunk, parseScript(scan))
+  vm.addModule(module, chunk = chunk)
+  vm.runModule(module)
+
 proc newVM*(): RodVM =
-  result = RodVM(
-    stack: @[],
-    locals: @[],
-    slots: @[]
-  )
+  result = RodVM()
 
 #~~
 # Function implementations

@@ -24,6 +24,9 @@ suite "parser":
     """)
   test "parseCall":
     testParse(parsePrefix, "fun(24)")
+  test "parseAccess":
+    testParse(parsePrefix, "vector.x")
+    testParse(parsePrefix, "vector.add(something)")
   test "parsePrefix":
     testParse(parsePrefix, "-10")
   test "parseIf":
