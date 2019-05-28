@@ -129,13 +129,13 @@ proc parseRod*(script: string): RodNode =
 
     Prefix <- >PrefixOp * Atom | Atom
 
-    Infix1 <- Prefix * ws * InfixOp1 * ws * Prefix | Prefix
-    Infix2 <- Infix1 * ws * InfixOp2 * ws * Infix1 | Infix1
-    Infix3 <- Infix2 * ws * InfixOp3 * ws * Infix2 | Infix2
-    Infix4 <- Infix3 * ws * InfixOp4 * ws * Infix3 | Infix3
-    Infix5 <- Infix4 * ws * InfixOp5 * ws * Infix4 | Infix4
-    Infix6 <- Infix5 * ws * InfixOp6 * ws * Infix5 | Infix5
     Infix7 <- Infix6 * ws * InfixOp7 * ws * Infix6 | Infix6
+    Infix6 <- Infix5 * ws * InfixOp6 * ws * Infix5 | Infix5
+    Infix5 <- Infix4 * ws * InfixOp5 * ws * Infix4 | Infix4
+    Infix4 <- Infix3 * ws * InfixOp4 * ws * Infix3 | Infix3
+    Infix3 <- Infix2 * ws * InfixOp3 * ws * Infix2 | Infix2
+    Infix2 <- Infix1 * ws * InfixOp2 * ws * Infix1 | Infix1
+    Infix1 <- Prefix * ws * InfixOp1 * ws * Prefix | Prefix
 
     Expr <- Infix7
 
