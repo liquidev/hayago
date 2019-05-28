@@ -10,4 +10,5 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 0.19.4"
+requires "npeg >= 0.10.0"
 requires "variant >= 0.2.8"

@@ -281,3 +281,29 @@ use strutils::{replace_all}
 
 echo(replace_all("he11o", "1", "l")) // → hello
 ```
+
+```rust
+// Concurrency
+
+fn countdown(high, low: num) num coro {
+  i := high
+  while i >= low {
+    yield i
+    i = i - 1
+  }
+}
+
+counter := countdown(10, 1)
+counter.run()
+echo(counter.get()) // → 10
+counter.run()
+echo(counter.get()) // → 9
+while counter.running() {
+  echo(counter.get()) // prints 8 through 1 and exits the loop
+}
+
+// Concurrent functions are used in for loops:
+for i in countdown(10, 1) {
+  echo(i) // prints 10 through 1
+}
+```

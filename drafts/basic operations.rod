@@ -1,0 +1,19 @@
+// rod provides a few basic operations:
+
+assert 2 + 2 == 4 // addition
+assert 2 - 2 == 0 // subtraction
+assert 2 * 2 == 4 // multiplication
+assert 2 / 2 == 1 // division
+
+// those operations can be overloaded for custom types
+
+struct Vec2 {
+  x, y: num
+}
+
+proc newVec2(x, y: num): Vec2 {
+  result = new Vec2 {
+    x: x,
+    y: y
+  }
+}
