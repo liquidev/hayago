@@ -1,0 +1,12 @@
+// variables in rod are very straightforward:
+var myVariable = 2
+
+// variables declared with 'var' can be mutated:
+myVariable = 5
+
+// one can declare variables with a default value:
+var x: number // defaults to 0.0
+
+// one other declaration type is available
+// variables declared with 'let' cannot be re-assigned:
+let Pi = 3.1415926
