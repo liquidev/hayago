@@ -19,3 +19,6 @@ suite "literals":
     scan("+ - * / = and or")
   test "idents":
     scan("hello helloWorld HelloWorld HELLO_WORLD hello_world")
+  test "variables":
+    scan("var x = 10")
+    scan("let π = 3.14")

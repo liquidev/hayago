@@ -4,8 +4,6 @@
 # licensed under the MIT license
 #--
 
-## This module is the rod parser.
-
 import strutils
 import tables
 
@@ -13,12 +11,18 @@ import common
 
 type
   Scanner* = object
-    file, input: string
+    file*, input: string
     pos, ln*, col*: int
   TokenKind* = enum
-    tokNumber = "number"
-    tokOperator = "operator", tokIdent = "ident"
-    tokDot = "."
+    # Literals
+    tokNumber = "Number"
+    tokOperator = "Operator", tokIdent = "Identifier"
+    # Punctuation
+    tokLPar = "(", tokRPar = ")"
+    tokDot = ".", tokComma = ",", tokSemi = ";"
+    # Keywords
+    tokVar = "var", tokLet = "let"
+    # Special
     tokEnd = "(end of input)"
   Token* = object
     ln*, col*: int
@@ -62,13 +66,18 @@ const Operators = {
   "^": 8
 }.toTable()
 
+const Keywords = {
+  "var": tokVar, "let": tokLet
+}.toTable()
+
 const UTF8Chars = {'\x80'..'\xff'}
 const IdentStartChars = strutils.IdentStartChars + UTF8Chars
 const IdentChars = strutils.IdentChars + UTF8Chars
 
 proc error*(scan: Scanner, msg: string) =
   raise (ref RodError)(kind: reSyntax,
-                       msg: $scan.ln & ":" & $scan.col & " " & msg,
+                       msg: "in " & scan.file & $scan.ln & ":" & $scan.col &
+                            " " & msg,
                        ln: scan.ln, col: scan.col)
 
 proc current(scan: Scanner): char =
@@ -88,10 +97,15 @@ proc advance(scan: var Scanner) =
   elif scan.current == '\r':
     scan.col = 0
 
-proc skip(scan: var Scanner) =
+proc linefeed*(scan: var Scanner): bool =
   while true:
     case scan.current
-    of Whitespace:
+    of Newlines:
+      result = true
+      while scan.current in Newlines:
+        scan.advance()
+      continue
+    of Whitespace - Newlines:
       while scan.current in Whitespace:
         scan.advance()
       continue
@@ -105,6 +119,9 @@ proc skip(scan: var Scanner) =
     else: discard
     break
 
+proc skip(scan: var Scanner) =
+  discard scan.linefeed()
+
 proc next*(scan: var Scanner): Token =
   scan.skip()
   let
@@ -112,6 +129,10 @@ proc next*(scan: var Scanner): Token =
     col = scan.col
   case scan.current
   of '\x00': result = Token(kind: tokEnd)
+  of '(': scan.advance(); result = Token(kind: tokLPar)
+  of ')': scan.advance(); result = Token(kind: tokRPar)
+  of ',': scan.advance(); result = Token(kind: tokComma)
+  of ';': scan.advance(); result = Token(kind: tokSemi)
   of OperatorChars:
     var operator = ""
     while scan.current in OperatorChars:
@@ -142,7 +163,9 @@ proc next*(scan: var Scanner): Token =
     while scan.current in IdentChars:
       ident.add(scan.current)
       scan.advance()
-    if ident in Operators:
+    if ident in Keywords:
+      result = Token(kind: Keywords[ident])
+    elif ident in Operators:
       result = Token(kind: tokOperator, operator: ident, prec: Operators[ident])
     else:
       result = Token(kind: tokIdent, ident: ident)
@@ -160,6 +183,16 @@ proc peek*(scan: var Scanner): Token =
   scan.ln = ln
   scan.col = col
 
-proc initScanner*(input: string, file = ""): Scanner =
+proc expect*(scan: var Scanner, kind: TokenKind): Token {.discardable.} =
+  result = scan.next()
+  if result.kind != kind:
+    scan.error($kind & " expected, got " & $result.kind)
+
+proc expectOp*(scan: var Scanner, op: string) =
+  let tok = scan.next()
+  if tok.kind != tokOperator or tok.operator != op:
+    scan.error('\'' & op & "' expected, got " & $tok.kind)
+
+proc initScanner*(input: string, file = "input"): Scanner =
   result = Scanner(file: file, input: input,
                    ln: 1, col: 0)

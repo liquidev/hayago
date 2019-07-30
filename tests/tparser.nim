@@ -9,4 +9,7 @@ template parse(parser: untyped, input: string) =
 
 suite "parser":
   test "expressions":
-    parse(parseExpr, """2 * 2 + 2""")
+    parse(parseExpr, r"2 * 2 + 2")
+  test "statements":
+    parse(parseStmt, r"var x = 2, y = 3, z = 4")
+    parse(parseStmt, r"let x = 3, y = 4, z = 5")

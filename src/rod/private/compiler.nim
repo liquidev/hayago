@@ -15,7 +15,13 @@ import value
 
 type
   Register* = uint8
+  Variable = ref object
+    name: string
+    ty: RodType
+    global, mutable, isSet: bool
+    value: Register
   Compiler* = object
+    globals: Table[string, Variable]
     registers: array[0..255, bool]
     types: Table[string, RodType]
 
@@ -36,11 +42,18 @@ proc addType*(compiler: var Compiler, name: string) =
   let ty = (id: compiler.types.len, name: name)
   compiler.types.add(name, ty)
 
+template compilerGuard(body) =
+  chunk.ln = node.ln
+  chunk.col = node.col
+  body
+
 macro compiler(pc) =
   pc[3].insert(1,
     newIdentDefs(ident"chunk", newNimNode(nnkVarTy).add(ident"Chunk")))
   pc[3].insert(1,
     newIdentDefs(ident"compiler", newNimNode(nnkVarTy).add(ident"Compiler")))
+  if pc[6].kind != nnkEmpty:
+    pc[6] = newCall("compilerGuard", pc[6])
   result = pc
 
 proc getConst(chunk: var Chunk, val: RodValue): uint16 =
@@ -48,6 +61,24 @@ proc getConst(chunk: var Chunk, val: RodValue): uint16 =
     if c == val: return i.uint16
   result = chunk.consts[val.kind].len.uint16
   chunk.consts[val.kind].add(val)
+
+proc declareVar*(compiler: var Compiler,
+                 name: string, mut: bool): Variable =
+  result = Variable(name: name, global: true, mutable: mut)
+  compiler.globals.add(name, result)
+
+proc getVar*(compiler: Compiler, node: Node): Variable =
+  if compiler.globals.hasKey(node.ident):
+    result = compiler.globals[node.ident]
+  else:
+    node.error("Attempt to reference undeclared variable '" & node.ident & '\'')
+
+proc setVar*(compiler: Compiler, chunk: var Chunk, node: Node, val: Register) =
+  var variable = compiler.getVar(node)
+  if not variable.mutable and variable.isSet:
+    node.error("Cannot reassign 'let' variable")
+  chunk.emit(opcMoveRV, val, chunk.getConst(node.ident.rod))
+  variable.isSet = true
 
 proc compileValue*(node: Node, dest: Register): RodType {.compiler.}
 
@@ -58,32 +89,32 @@ proc moveConst(node: Node, dest: Register): RodType {.compiler.} =
     result = compiler.types["number"]
   else: discard
 
-proc prefix(prefix: Node, dest: Register): RodType {.compiler.} =
+proc prefix(node: Node, dest: Register): RodType {.compiler.} =
   var typeMismatch = false
   let
     source = compiler.alloc()
-    sourceTy = compiler.compileValue(chunk, prefix[1], source)
+    sourceTy = compiler.compileValue(chunk, node[1], source)
   if sourceTy == compiler.types["number"]:
-    case prefix[0].ident
+    case node[0].ident
     of "+": discard # + is a noop
     of "-": chunk.emit(opcNegN, dest, source, 0)
     else: typeMismatch = true
     if not typeMismatch: result = sourceTy
   else: typeMismatch = true
   if typeMismatch:
-    prefix.error("No overload of '" & prefix[0].ident & "' available for <" &
+    node.error("No overload of '" & node[0].ident & "' available for <" &
                  sourceTy.name & ">")
   compiler.free(source)
 
-proc infix(infix: Node, dest: Register): RodType {.compiler.} =
+proc infix(node: Node, dest: Register): RodType {.compiler.} =
   var typeMismatch = false
   let
     a = compiler.alloc()
     b = compiler.alloc()
-    tyA = compiler.compileValue(chunk, infix[1], a)
-    tyB = compiler.compileValue(chunk, infix[2], b)
+    tyA = compiler.compileValue(chunk, node[1], a)
+    tyB = compiler.compileValue(chunk, node[2], b)
   if tyA == compiler.types["number"] and tyB == compiler.types["number"]:
-    case infix[0].ident
+    case node[0].ident
     of "+": chunk.emit(opcAddN, dest, a, b)
     of "-": chunk.emit(opcSubN, dest, a, b)
     of "*": chunk.emit(opcMultN, dest, a, b)
@@ -92,8 +123,8 @@ proc infix(infix: Node, dest: Register): RodType {.compiler.} =
     if not typeMismatch: result = tyA
   else: typeMismatch = true
   if typeMismatch:
-    infix.error("No overload of '" & infix[0].ident & "' available for <" &
-                 tyA.name & ", " & tyB.name & ">")
+    node.error("No overload of '" & node[0].ident & "' available for <" &
+               tyA.name & ", " & tyB.name & ">")
   compiler.free(b)
   compiler.free(a)
 
@@ -104,6 +135,21 @@ proc compileValue*(node: Node, dest: Register): RodType {.compiler.} =
     of nkPrefix: compiler.prefix(chunk, node, dest)
     of nkInfix: compiler.infix(chunk, node, dest)
     else: compiler.types["error type"]
+
+proc compileStmt*(node: Node) {.compiler.} =
+  case node.kind
+  of nkLet, nkVar:
+    for decl in node.children:
+      var variable = compiler.declareVar(decl[1].ident, node.kind == nkVar)
+      let value = compiler.alloc()
+      variable.ty = compiler.compileValue(chunk, decl[2], value)
+      compiler.setVar(chunk, decl[1], value)
+      if variable.global:
+        compiler.free(value)
+  else:
+    let temp = compiler.alloc()
+    discard compiler.compileValue(chunk, node, temp)
+    compiler.free(temp)
 
 proc initTypes(compiler: var Compiler) =
   compiler.addType("error type")

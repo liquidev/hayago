@@ -13,8 +13,10 @@ type
   NodeKind* = enum
     nkNumber, nkIdent
     nkPrefix = "prefix", nkInfix = "infix"
+    nkVar, nkLet
   Node* = ref object
     ln*, col*: int
+    file*: string
     case kind*: NodeKind
     of nkNumber:
       numberVal*: float
@@ -38,7 +40,7 @@ proc `$`*(node: Node): string =
       of nkPrefix, nkInfix: ""
       else: $node.kind & " ")
     for i, child in node.children:
-      if child.kind notin LeafNodes and child.children.len > 1:
+      if node.kind notin LeafNodes and child.children.len > 1:
         result.add("\n")
         result.add(indent($child, 2))
       else:
@@ -51,6 +53,7 @@ template ruleGuard(body) =
   body
   result.ln = scan.ln
   result.col = scan.col
+  result.file = scan.file
 
 macro rule(pc) =
   pc[3].insert(1,
@@ -75,22 +78,46 @@ proc parsePrefix*(token: Token): Node {.rule.} =
                                 children: @[Node(kind: nkIdent,
                                                  ident: token.operator),
                                             parsePrefix(scan, scan.next())])
-  else: discard
+  else: scan.error("Prefix expected, got " & $token.kind)
 
 proc parseInfix*(left: Node, token: Token): Node {.rule.} =
   case token.kind
   of tokOperator:
-    if token.operator != "not":
+    if token.operator notin ["not", "->", "$"]:
       result = Node(kind: nkInfix,
                     children: @[Node(kind: nkIdent, ident: token.operator),
                                 left, parseExpr(scan, token.prec)])
-  else: discard
+  else: scan.error("Infix expected, got " & $token.kind)
 
 proc parseExpr*(prec = 0): Node {.rule.} =
   var token = scan.next()
   result = parsePrefix(scan, token)
+  if result == nil:
+    scan.error("Unexpected token: " & $token.kind)
   while prec < precedence(scan.peek()):
     token = scan.next()
     if token.kind == tokEnd:
       break
     result = parseInfix(scan, result, token)
+
+proc parseStmt*(): Node {.rule.} =
+  result =
+    case scan.peek().kind
+    of tokVar, tokLet:
+      var node = Node(kind: if scan.next().kind == tokVar: nkVar
+                            else: nkLet)
+      while true:
+        let name = scan.expect(tokIdent)
+        scan.expectOp("=")
+        let val = scan.parseExpr()
+        node.children.add(Node(kind: nkInfix, children: @[
+                            Node(kind: nkIdent, ident: "="),
+                            Node(kind: nkIdent, ident: name.ident), val]))
+        if scan.peek().kind == tokComma:
+          discard scan.next()
+          continue
+        break
+      if node.children.len < 1:
+        scan.error("Variable declaration expected")
+      node
+    else: parseExpr(scan)
