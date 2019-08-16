@@ -9,107 +9,78 @@ import value
 
 type
   Opcode* = enum
-      ## Available instruction layouts:
-      ##  - O 8 8 8 - Opcode with 3 8-bit params (Op3u8)
-      ##  - O 8 16  - Opcode with 1 8-bit param and 1 16-bit param (Op1u8u16)
-      ##  - O 24    - Opcode with a single 24-bit param (Op1u24)
-      ##  - O       - Opcode without params (Op)
-    opcMoveN = "moveN"
-      ## Move a number into a register.
-      ## Layout: O 8 16
-      ## moveN <dest> <id>
-    opcMoveVR = "moveVR"
-      ## Move a global variable into a register.
-      ## The parameter is a string ID.
-      ## Layout: O 8 16
-      ## moveVR <dest> <id>
-    opcMoveRV = "moveRV"
-      ## Move a register into a global variable.
-      ## The parameter is a string ID.
-      ## Layout: O 8 16
-      ## moveRV <src> <id>
-    opcNegN = "negN"
-      ## Negate a number.
-      ## Layout: O 8 8 8
-      ## negN <dest> <src> 00h
-    opcAddN = "addN"
-      ## Add two numbers.
-      ## Layout: O 8 8 8
-      ## addN <result> <a> <b>
-    opcSubN = "subN"
-      ## Subtract two numbers.
-      ## Layout: O 8 8 8
-      ## subN <result> <a> <b>
-    opcMultN = "multN"
-      ## Multiply two numbers.
-      ## Layout: O 8 8 8
-      ## multN <result> <a> <b>
-    opcDivN = "divN"
-      ## Divide two numbers.
-      ## Layout: O 8 8 8
-      ## divN <result> <a> <b>
+    # Stack
+    opcPushTrue = "pushTrue"
+    opcPushFalse = "pushFalse"
+    opcPushN = "pushN" ## Push number
+    opcPushG = "pushG" ## Push global
+    opcPopG = "popG" ## Pop global
+    opcPushL = "pushL" ## Push local
+    opcPopL = "popL" ## Pop local
+    opcDiscard = "discard" ## Discard 1 value
+    opcNDiscard = "nDiscard" ## Discard n values
+    # Numbers
+    opcNegN = "negN" ## Negate number
+    opcAddN = "addN" ## Add numbers
+    opcSubN = "subN" ## Subtract numbers
+    opcMultN = "multN" ## Multiply numbers
+    opcDivN = "divN" ## Divide numbers
+    # Execution
+    opcJumpFwd = "jumpFwd" ## Jump forward
+    opcJumpFwdF = "jumpFwdF" ## Jump forward if false
     opcHalt = "halt"
-      ## Halt execution.
-      ## Layout: O
-      ## halt
   LineInfo* = tuple
     ln, col: int
     runLength: int
   Chunk* = object
     file*: string
-    code*: seq[uint32]
+    code*: seq[uint8]
     ln*, col*: int
     lineInfo: seq[LineInfo]
     consts*: OrdTable(RodValueKind, seq[RodValue])
 
-proc addLineInfo*(chunk: var Chunk, ln, col: int) =
+proc addLineInfo*(chunk: var Chunk, n: int) =
   if chunk.lineInfo.len > 0:
-    if chunk.lineInfo[^1].ln == ln and chunk.lineInfo[^1].col == col:
-      inc(chunk.lineInfo[^1].runLength)
+    if chunk.lineInfo[^1].ln == chunk.ln and
+       chunk.lineInfo[^1].col == chunk.col:
+      inc(chunk.lineInfo[^1].runLength, n)
       return
-  chunk.lineInfo.add((ln, col, 1))
+  chunk.lineInfo.add((chunk.ln, chunk.col, n))
 
 proc emit*(chunk: var Chunk, opc: Opcode) =
-  chunk.addLineInfo(chunk.ln, chunk.col)
-  chunk.code.add(uint32(opc) shl 24)
+  chunk.addLineInfo(1)
+  chunk.code.add(opc.uint8)
 
-proc emit*(chunk: var Chunk, opc: Opcode, a: uint32) =
-  chunk.addLineInfo(chunk.ln, chunk.col)
-  chunk.code.add(uint32(opc) shl 24 or a)
+proc emit*(chunk: var Chunk, u8: uint8) =
+  chunk.addLineInfo(1)
+  chunk.code.add(u8)
 
-proc emit*(chunk: var Chunk, opc: Opcode, a, b, c: uint8) =
-  chunk.addLineInfo(chunk.ln, chunk.col)
-  chunk.code.add(uint32(opc) shl 24 or
-                 uint32(a) shl 16 or
-                 uint32(b) shl 8 or
-                 uint32(c))
+proc emit*(chunk: var Chunk, u16: uint16) =
+  chunk.addLineInfo(2)
+  chunk.code.add([uint8 u16 and 0x00ff'u16,
+                  uint8 (u16 and 0xff00'u16) shr 8])
 
-proc emit*(chunk: var Chunk, opc: Opcode, a: uint8, b: uint16) =
-  chunk.addLineInfo(chunk.ln, chunk.col)
-  chunk.code.add(uint32(opc) shl 24 or
-                 uint32(a) shl 16 or b)
+proc emitHole*(chunk: var Chunk, size: int): int =
+  result = chunk.code.len
+  chunk.addLineInfo(size)
+  for i in 1..size:
+    chunk.code.add(0x00)
 
-proc getOp*(chunk: Chunk, i: int): Opcode =
-  result = Opcode(chunk.code[i] shr 24)
+proc fillHole*(chunk: var Chunk, hole: int, val: uint8) =
+  chunk.code[hole] = val
 
-proc getOp3u8*(chunk: Chunk, i: int): tuple[opc: Opcode, a, b, c: uint8] =
-  let u32 = chunk.code[i]
-  result = (Opcode(u32 shr 24),
-            uint8 (u32 and 0x00ff0000) shr 16,
-            uint8 (u32 and 0x0000ff00) shr 8,
-            uint8 (u32 and 0x000000ff))
+proc fillHole*(chunk: var Chunk, hole: int, val: uint16) =
+  chunk.code[hole] = uint8 val and 0x00ff
+  chunk.code[hole + 1] = uint8 (val and 0xff00) shr 8
 
-proc getOp1u24*(chunk: Chunk, i: int): tuple[opc: Opcode, a: uint32] =
-  let u32 = chunk.code[i]
-  result = (Opcode(u32 shr 24),
-            u32 shr 16)
+proc getOpcode*(chunk: Chunk, i: int): Opcode =
+  result = chunk.code[i].Opcode
 
-proc getOp1u8u16*(chunk: Chunk, i: int): tuple[opc: Opcode,
-                                               a: uint8, b: uint16] =
-  let u32 = chunk.code[i]
-  result = (Opcode(u32 shr 24),
-            uint8 (u32 and 0x00ff0000) shr 16,
-            uint16 (u32 and 0x0000ffff))
+proc getU8*(chunk: Chunk, i: int): uint8 =
+  result = chunk.code[i]
+
+proc getU16*(chunk: Chunk, i: int): uint16 =
+  result = chunk.code[i].uint16 or chunk.code[i + 1].uint16 shl 8
 
 proc getLineInfo*(chunk: Chunk, i: int): LineInfo =
   var n = 0

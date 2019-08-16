@@ -14,29 +14,29 @@ import types
 import value
 
 type
-  Register* = uint8
-  Variable = ref object
-    name: string
+  VariableKind = enum
+    vkGlobal
+    vkLocal
+  Variable = object
     ty: RodType
-    global, mutable, isSet: bool
-    value: Register
+    name: string
+    isMutable, isSet: bool
+    case kind: VariableKind
+    of vkGlobal:
+      discard
+    of vkLocal:
+      stackPos, scope: int
   Compiler* = object
-    globals: Table[string, Variable]
     registers: array[0..255, bool]
     types: Table[string, RodType]
+    globals: Table[string, Variable]
+    locals: seq[Variable]
+    scope: int
 
 proc error(node: Node, msg: string) =
   raise (ref RodError)(kind: reCompile, ln: node.ln, col: node.col,
-                       msg: $node.ln & ':' & $node.col & ' ' & msg)
-
-proc alloc*(compiler: var Compiler): Register =
-  for i, r in compiler.registers:
-    if not r:
-      compiler.registers[i] = true
-      return i.uint8
-
-proc free(compiler: var Compiler, reg: Register) =
-  compiler.registers[reg] = false
+                       msg: node.file & " " & $node.ln & ':' & $node.col & ' ' &
+                            msg)
 
 proc addType*(compiler: var Compiler, name: string) =
   let ty = (id: compiler.types.len, name: name)
@@ -62,97 +62,206 @@ proc getConst(chunk: var Chunk, val: RodValue): uint16 =
   result = chunk.consts[val.kind].len.uint16
   chunk.consts[val.kind].add(val)
 
-proc declareVar*(compiler: var Compiler,
-                 name: string, mut: bool): Variable =
-  result = Variable(name: name, global: true, mutable: mut)
-  compiler.globals.add(name, result)
+proc pushScope(compiler: var Compiler) =
+  inc(compiler.scope)
 
-proc getVar*(compiler: Compiler, node: Node): Variable =
-  if compiler.globals.hasKey(node.ident):
-    result = compiler.globals[node.ident]
+proc popScope(compiler: var Compiler, chunk: var Chunk) =
+  var n = 0
+  for i in countdown(compiler.locals.len - 1, 0):
+    if compiler.locals[i].scope == compiler.scope:
+      compiler.locals.setLen(compiler.locals.len - 1)
+      inc(n)
+  dec(compiler.scope)
+  if n > 0:
+    chunk.emit(opcNDiscard)
+    chunk.emit(n.uint8)
+
+proc declareVar(compiler: var Compiler, name: string, mut: bool, ty: RodType) =
+  if compiler.scope > 0:
+    compiler.locals.add(Variable(name: name, isMutable: mut, ty: ty,
+                                 kind: vkLocal, stackPos: compiler.locals.len,
+                                 scope: compiler.scope))
   else:
-    node.error("Attempt to reference undeclared variable '" & node.ident & '\'')
+    compiler.globals.add(name, Variable(name: name, isMutable: mut, ty: ty,
+                                        kind: vkGlobal))
 
-proc setVar*(compiler: Compiler, chunk: var Chunk, node: Node, val: Register) =
-  var variable = compiler.getVar(node)
-  if not variable.mutable and variable.isSet:
-    node.error("Cannot reassign 'let' variable")
-  chunk.emit(opcMoveRV, val, chunk.getConst(node.ident.rod))
-  variable.isSet = true
+proc getVar(compiler: Compiler, node: Node): Variable =
+  if compiler.scope > 0:
+    for i in countdown(compiler.locals.len - 1, 0):
+      if compiler.locals[i].name == node.ident:
+        return compiler.locals[i]
+  else:
+    if compiler.globals.hasKey(node.ident):
+      return compiler.globals[node.ident]
+  node.error("Attempt to reference undeclared variable '" & node.ident & '\'')
 
-proc compileValue*(node: Node, dest: Register): RodType {.compiler.}
+proc popVar(compiler: var Compiler, chunk: var Chunk, node: Node) =
+  var
+    variable: Variable
+    localIndex: int
+  if compiler.scope > 0:
+    for i in countdown(compiler.locals.len - 1, 0):
+      if compiler.locals[i].name == node.ident:
+        variable = compiler.locals[i]
+        localIndex = i
+        break
+  else:
+    if compiler.globals.hasKey(node.ident):
+      variable = compiler.globals[node.ident]
+  if not variable.isMutable and variable.isSet:
+    node.error("Attempt to assign to 'let' variable '" & node.ident & '\'')
+  else:
+    if variable.kind == vkLocal:
+      if variable.isSet:
+        chunk.emit(opcPopL)
+        chunk.emit(variable.stackPos.uint8)
+      compiler.locals[localIndex].isSet = true
+    else:
+      chunk.emit(opcPopG)
+      chunk.emit(chunk.getConst(node.ident.rod))
+      compiler.globals[node.ident].isSet = true
+    return
+  node.error("Attempt to assign to undeclared variable '" & node.ident & '\'')
 
-proc moveConst(node: Node, dest: Register): RodType {.compiler.} =
+proc pushVar(compiler: Compiler, chunk: var Chunk, variable: Variable) =
+  if variable.kind == vkLocal:
+    chunk.emit(opcPushL)
+    chunk.emit(variable.stackPos.uint8)
+  else:
+    chunk.emit(opcPushG)
+    chunk.emit(chunk.getConst(variable.name.rod))
+
+proc compileValue*(node: Node): RodType {.compiler.}
+
+proc pushConst(node: Node): RodType {.compiler.} =
   case node.kind
+  of nkBool:
+    if node.boolVal == true: chunk.emit(opcPushTrue)
+    else: chunk.emit(opcPushFalse)
+    result = compiler.types["bool"]
   of nkNumber:
-    chunk.emit(opcMoveN, dest, chunk.getConst(node.numberVal.rod))
+    chunk.emit(opcPushN)
+    chunk.emit(chunk.getConst(node.numberVal.rod))
     result = compiler.types["number"]
   else: discard
 
-proc prefix(node: Node, dest: Register): RodType {.compiler.} =
-  var typeMismatch = false
-  let
-    source = compiler.alloc()
-    sourceTy = compiler.compileValue(chunk, node[1], source)
-  if sourceTy == compiler.types["number"]:
+proc prefix(node: Node): RodType {.compiler.} =
+  var
+    typeMismatch = false
+  let ty = compiler.compileValue(chunk, node[1])
+  if ty == compiler.types["number"]:
     case node[0].ident
     of "+": discard # + is a noop
-    of "-": chunk.emit(opcNegN, dest, source, 0)
+    of "-": chunk.emit(opcNegN)
     else: typeMismatch = true
-    if not typeMismatch: result = sourceTy
+    if not typeMismatch: result = ty
   else: typeMismatch = true
   if typeMismatch:
     node.error("No overload of '" & node[0].ident & "' available for <" &
-                 sourceTy.name & ">")
-  compiler.free(source)
+                ty.name & ">")
 
-proc infix(node: Node, dest: Register): RodType {.compiler.} =
-  var typeMismatch = false
-  let
-    a = compiler.alloc()
-    b = compiler.alloc()
-    tyA = compiler.compileValue(chunk, node[1], a)
-    tyB = compiler.compileValue(chunk, node[2], b)
-  if tyA == compiler.types["number"] and tyB == compiler.types["number"]:
-    case node[0].ident
-    of "+": chunk.emit(opcAddN, dest, a, b)
-    of "-": chunk.emit(opcSubN, dest, a, b)
-    of "*": chunk.emit(opcMultN, dest, a, b)
-    of "/": chunk.emit(opcDivN, dest, a, b)
+proc infix(node: Node): RodType {.compiler.} =
+  if node[0].ident != "=":
+    var typeMismatch = false
+    let
+      aTy = compiler.compileValue(chunk, node[1])
+      bTy = compiler.compileValue(chunk, node[2])
+    if aTy == compiler.types["number"] and bTy == compiler.types["number"]:
+      case node[0].ident
+      of "+": chunk.emit(opcAddN)
+      of "-": chunk.emit(opcSubN)
+      of "*": chunk.emit(opcMultN)
+      of "/": chunk.emit(opcDivN)
+      else: typeMismatch = true
+      if not typeMismatch: result = aTy
     else: typeMismatch = true
-    if not typeMismatch: result = tyA
-  else: typeMismatch = true
-  if typeMismatch:
-    node.error("No overload of '" & node[0].ident & "' available for <" &
-               tyA.name & ", " & tyB.name & ">")
-  compiler.free(b)
-  compiler.free(a)
+    if typeMismatch:
+      node.error("No overload of '" & node[0].ident & "' available for <" &
+                 aTy.name & ", " & bTy.name & ">")
+  else:
+    case node[1].kind
+    of nkIdent:
+      var variable = compiler.getVar(node[1])
+      let valTy = compiler.compileValue(chunk, node[2])
+      if valTy == variable.ty:
+        compiler.popVar(chunk, node[1])
+      else:
+        node.error("Type mismatch: cannot assign value of type <" & valTy.name &
+                   "> to a variable of type <" & variable.ty.name & ">")
+      result = compiler.types["void"]
+    else: node.error("Cannot assign to '" & ($node.kind)[2..^1] & "'")
 
-proc compileValue*(node: Node, dest: Register): RodType {.compiler.} =
+proc compileBlock*(node: Node) {.compiler.}
+
+proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
+  var pos = 0
+  var jumpsToEnd: seq[int]
+  while pos < node.children.len:
+    if node[pos].kind != nkBlock:
+      if compiler.compileValue(chunk, node[pos]) != compiler.types["bool"]:
+        node[pos].error("'if' condition must be a boolean")
+      inc(pos)
+      chunk.emit(opcJumpFwdF)
+      let afterBlock = chunk.emitHole(2)
+      compiler.compileBlock(chunk, node[pos])
+      inc(pos)
+      if pos < node.children.len - 1:
+        chunk.emit(opcJumpFwd)
+        jumpsToEnd.add(chunk.emitHole(2))
+      chunk.fillHole(afterBlock, uint16(chunk.code.len - afterBlock))
+    else:
+      compiler.compileBlock(chunk, node[pos])
+      inc(pos)
+  for hole in jumpsToEnd:
+    chunk.fillHole(hole, uint16(chunk.code.len - hole))
   result =
-    case node.kind
-    of nkNumber: compiler.moveConst(chunk, node, dest)
-    of nkPrefix: compiler.prefix(chunk, node, dest)
-    of nkInfix: compiler.infix(chunk, node, dest)
-    else: compiler.types["error type"]
+    if isStmt: compiler.types["void"]
+    else: compiler.types["void"]
+
+proc compileValue*(node: Node): RodType {.compiler.} =
+  case node.kind
+  of nkBool, nkNumber:
+    result = compiler.pushConst(chunk, node)
+  of nkIdent:
+    var variable = compiler.getVar(node)
+    compiler.pushVar(chunk, variable)
+    result = variable.ty
+  of nkPrefix:
+    result = compiler.prefix(chunk, node)
+  of nkInfix:
+    result = compiler.infix(chunk, node)
+  of nkIf:
+    result = compiler.compileIf(chunk, node, false)
+  else: node.error("Value does not have a valid type")
 
 proc compileStmt*(node: Node) {.compiler.} =
   case node.kind
   of nkLet, nkVar:
     for decl in node.children:
-      var variable = compiler.declareVar(decl[1].ident, node.kind == nkVar)
-      let value = compiler.alloc()
-      variable.ty = compiler.compileValue(chunk, decl[2], value)
-      compiler.setVar(chunk, decl[1], value)
-      if variable.global:
-        compiler.free(value)
+      compiler.declareVar(decl[1].ident, node.kind == nkVar,
+                          compiler.compileValue(chunk, decl[2]))
+      compiler.popVar(chunk, decl[1])
+  of nkBlock: compiler.compileBlock(chunk, node)
+  of nkIf: discard compiler.compileIf(chunk, node, true)
   else:
-    let temp = compiler.alloc()
-    discard compiler.compileValue(chunk, node, temp)
-    compiler.free(temp)
+    let ty = compiler.compileValue(chunk, node)
+    if ty != compiler.types["void"]:
+      chunk.emit(opcDiscard)
+
+proc compileBlock*(node: Node) {.compiler.} =
+  compiler.pushScope()
+  for s in node.children:
+    compiler.compileStmt(chunk, s)
+  compiler.popScope(chunk)
+
+proc compileScript*(node: Node) {.compiler.} =
+  for s in node.children:
+    compiler.compileStmt(chunk, s)
+  chunk.emit(opcHalt)
 
 proc initTypes(compiler: var Compiler) =
-  compiler.addType("error type")
+  compiler.addType("void")
+  compiler.addType("bool")
   compiler.addType("number")
 
 proc initCompiler*(): Compiler =

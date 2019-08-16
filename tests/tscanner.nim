@@ -22,3 +22,5 @@ suite "literals":
   test "variables":
     scan("var x = 10")
     scan("let π = 3.14")
+  test "blocks":
+    scan("{ hello(world) }")

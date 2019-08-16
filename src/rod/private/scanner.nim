@@ -15,13 +15,16 @@ type
     pos, ln*, col*: int
   TokenKind* = enum
     # Literals
-    tokNumber = "Number"
+    tokTrue = "true", tokFalse = "false"
+    tokNumber = "Number", tokString = "String"
     tokOperator = "Operator", tokIdent = "Identifier"
     # Punctuation
     tokLPar = "(", tokRPar = ")"
+    tokLBrace = "{", tokRBrace = "}"
     tokDot = ".", tokComma = ",", tokSemi = ";"
     # Keywords
     tokVar = "var", tokLet = "let"
+    tokIf = "if", tokElif = "elif", tokElse = "else"
     # Special
     tokEnd = "(end of input)"
   Token* = object
@@ -29,6 +32,8 @@ type
     case kind*: TokenKind
     of tokNumber:
       numberVal*: float
+    of tokString:
+      stringVal*: string
     of tokOperator:
       operator*: string
       prec*: int
@@ -53,21 +58,23 @@ const OperatorChars = {
 const Operators = {
   "not": 0, "->": 0, "$": 0,
 
-  "=": 0,
-  "or": 1, "xor": 1,
-  "and": 2,
-  "==": 3, "<=": 3, "<": 3, ">": 3, ">=": 3, "!=": 3,
-  "in": 3, "notin": 3, "is": 3, "isnot": 3, "of": 3,
-  "..": 4, "..<": 4,
-  "&": 5,
-  "+": 6, "-": 6,
-  "*": 7, "/": 7, "%": 7,
-  "div": 7, "mod": 7, "shl": 7, "shr": 7,
-  "^": 8
+  "=": 1,
+  "or": 2, "xor": 2,
+  "and": 3,
+  "==": 4, "<=": 4, "<": 4, ">": 4, ">=": 4, "!=": 4,
+  "in": 4, "notin": 4, "is": 4, "isnot": 4, "of": 4,
+  "..": 5, "..<": 5,
+  "&": 6,
+  "+": 7, "-": 7,
+  "*": 8, "/": 8, "%": 8,
+  "div": 8, "mod": 8, "shl": 8, "shr": 8,
+  "^": 9
 }.toTable()
 
 const Keywords = {
-  "var": tokVar, "let": tokLet
+  "true": tokTrue, "false": tokFalse,
+  "var": tokVar, "let": tokLet,
+  "if": tokIf, "elif": tokElif, "else": tokElse
 }.toTable()
 
 const UTF8Chars = {'\x80'..'\xff'}
@@ -76,9 +83,12 @@ const IdentChars = strutils.IdentChars + UTF8Chars
 
 proc error*(scan: Scanner, msg: string) =
   raise (ref RodError)(kind: reSyntax,
-                       msg: "in " & scan.file & $scan.ln & ":" & $scan.col &
+                       msg: scan.file & " " & $scan.ln & ":" & $scan.col &
                             " " & msg,
                        ln: scan.ln, col: scan.col)
+
+proc atEnd*(scan: Scanner): bool =
+  result = scan.pos >= scan.input.len
 
 proc current(scan: Scanner): char =
   if scan.pos < scan.input.len: scan.input[scan.pos]
@@ -100,6 +110,8 @@ proc advance(scan: var Scanner) =
 proc linefeed*(scan: var Scanner): bool =
   while true:
     case scan.current
+    of '\x00':
+      result = true
     of Newlines:
       result = true
       while scan.current in Newlines:
@@ -131,6 +143,8 @@ proc next*(scan: var Scanner): Token =
   of '\x00': result = Token(kind: tokEnd)
   of '(': scan.advance(); result = Token(kind: tokLPar)
   of ')': scan.advance(); result = Token(kind: tokRPar)
+  of '{': scan.advance(); result = Token(kind: tokLBrace)
+  of '}': scan.advance(); result = Token(kind: tokRBrace)
   of ',': scan.advance(); result = Token(kind: tokComma)
   of ';': scan.advance(); result = Token(kind: tokSemi)
   of OperatorChars:
@@ -157,6 +171,15 @@ proc next*(scan: var Scanner): Token =
         number.add(scan.current)
         scan.advance()
     result = Token(kind: tokNumber, numberVal: parseFloat(number))
+  of '"':
+    scan.advance()
+    var str = ""
+    while scan.current != '"':
+      if scan.current == '\x00':
+        scan.error("Unterminated string literal")
+      str.add(scan.current)
+    scan.advance()
+    result = Token(kind: tokString, stringVal: str)
   of IdentStartChars:
     var ident = $scan.current
     scan.advance()

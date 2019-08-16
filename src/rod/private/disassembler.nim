@@ -13,30 +13,38 @@ proc register*(num: uint8): string =
   result = '[' & $num & ']'
 
 proc disassemble*(chunk: Chunk): string =
-  var lineInfo: LineInfo
-  for i, c in chunk.code:
-    result.add(i.toHex(8) & " ")
+  var
+    pc = 0
+    lineInfo: LineInfo
+  while pc < chunk.code.len:
+    result.add(pc.toHex(8) & " ")
     let
-      opc = chunk.getOp(i)
-      li = chunk.getLineInfo(i)
+      opc = chunk.getOpcode(pc)
+      li = chunk.getLineInfo(pc)
     if lineInfo.ln == li.ln:
       result.add("   ·")
     else:
       result.add(align($li.ln, 4))
     lineInfo = li
     result.add("  " & alignLeft($opc, 12))
+    inc(pc)
     case opc
-    of opcMoveN:
-      let (_, dest, id) = chunk.getOp1u8u16(i)
-      result.add(dest.register & ' ' & $chunk.consts[rvNumber][id])
-    of opcMoveVR, opcMoveRV:
-      let (_, dest, id) = chunk.getOp1u8u16(i)
-      result.add(dest.register & ' ' & chunk.consts[rvString][id].str)
-    of opcNegN:
-      let (_, dest, src, _) = chunk.getOp3u8(i)
-      result.add(dest.register & ' ' & src.register)
-    of opcAddN, opcSubN, opcMultN, opcDivN:
-      let (_, dest, a, b) = chunk.getOp3u8(i)
-      result.add(dest.register & ' ' & a.register & ' ' & b.register)
-    else: discard
+    of opcPushN:
+      result.add($chunk.consts[rvNumber][chunk.getU16(pc)])
+      inc(pc, 2)
+    of opcPushG, opcPopG:
+      result.add(chunk.consts[rvString][chunk.getU16(pc)].str)
+      inc(pc, 2)
+    of opcPushL, opcPopL, opcNDiscard:
+      result.add($chunk.getU8(pc))
+      inc(pc, 1)
+    of opcJumpFwd, opcJumpFwdF:
+      result.add(alignLeft($chunk.getU16(pc), 6))
+      result.add("→ ")
+      if opc in {opcJumpFwd, opcJumpFwdF}:
+        result.add(toHex(pc + chunk.getU16(pc).int, 8))
+      inc(pc, 2)
+    of opcPushTrue, opcPushFalse, opcDiscard,
+       opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
+       opcHalt: discard
     result.add('\n')
