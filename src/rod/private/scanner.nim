@@ -25,6 +25,8 @@ type
     # Keywords
     tokVar = "var", tokLet = "let"
     tokIf = "if", tokElif = "elif", tokElse = "else"
+    tokWhile = "while"
+    tokFor = "for", tokIn = "in"
     # Special
     tokEnd = "(end of input)"
   Token* = object
@@ -74,7 +76,9 @@ const Operators = {
 const Keywords = {
   "true": tokTrue, "false": tokFalse,
   "var": tokVar, "let": tokLet,
-  "if": tokIf, "elif": tokElif, "else": tokElse
+  "if": tokIf, "elif": tokElif, "else": tokElse,
+  "while": tokWhile,
+  "for": tokFor, "in": tokIn
 }.toTable()
 
 const UTF8Chars = {'\x80'..'\xff'}

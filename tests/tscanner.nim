@@ -24,3 +24,7 @@ suite "literals":
     scan("let π = 3.14")
   test "blocks":
     scan("{ hello(world) }")
+  test "flow control":
+    scan("if x {} elif x {} else {}")
+    scan("while true {}")
+    scan("for x in y {}")

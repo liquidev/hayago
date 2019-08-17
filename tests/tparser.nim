@@ -23,15 +23,15 @@ suite "parser":
       var x = 2, y = 3
       { var z = 4 }
     """)
-  test "if statements":
+  test "if expressions":
     parse(parseScript, """
       if true {
-
       } elif 2 {
-
       } elif 3 {
-
       } else {
-
       }
+    """)
+  test "while loops":
+    parse(parseScript, """
+      while true {}
     """)

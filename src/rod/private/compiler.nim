@@ -39,7 +39,7 @@ proc error(node: Node, msg: string) =
                             msg)
 
 proc addType*(compiler: var Compiler, name: string) =
-  let ty = (id: compiler.types.len, name: name)
+  let ty = (id: compiler.types.len + 1, name: name)
   compiler.types.add(name, ty)
 
 template compilerGuard(body) =
@@ -191,11 +191,13 @@ proc infix(node: Node): RodType {.compiler.} =
       result = compiler.types["void"]
     else: node.error("Cannot assign to '" & ($node.kind)[2..^1] & "'")
 
-proc compileBlock*(node: Node) {.compiler.}
+proc compileBlock*(node: Node, isStmt: bool): RodType {.compiler.}
 
 proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
-  var pos = 0
-  var jumpsToEnd: seq[int]
+  var
+    pos = 0
+    jumpsToEnd: seq[int]
+    ifTy: RodType
   while pos < node.children.len:
     if node[pos].kind != nkBlock:
       if compiler.compileValue(chunk, node[pos]) != compiler.types["bool"]:
@@ -203,14 +205,25 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
       inc(pos)
       chunk.emit(opcJumpFwdF)
       let afterBlock = chunk.emitHole(2)
-      compiler.compileBlock(chunk, node[pos])
-      inc(pos)
+      let blockTy = compiler.compileBlock(chunk, node[pos], isStmt)
+      if not isStmt:
+        if ifTy.id == 0:
+          ifTy = blockTy
+        else:
+          if blockTy != ifTy:
+            node[pos].error("Type mismatch: <" & ifTy.name & "> expected, " &
+                            "but got <" & blockTy.name & ">")
       if pos < node.children.len - 1:
         chunk.emit(opcJumpFwd)
         jumpsToEnd.add(chunk.emitHole(2))
+      inc(pos)
       chunk.fillHole(afterBlock, uint16(chunk.code.len - afterBlock))
     else:
-      compiler.compileBlock(chunk, node[pos])
+      let blockTy = compiler.compileBlock(chunk, node[pos], isStmt)
+      if not isStmt:
+        if blockTy != ifTy:
+          node[pos].error("Type mismatch: <" & ifTy.name & "> expected, but " &
+                          "got <" & blockTy.name & ">")
       inc(pos)
   for hole in jumpsToEnd:
     chunk.fillHole(hole, uint16(chunk.code.len - hole))
@@ -241,18 +254,25 @@ proc compileStmt*(node: Node) {.compiler.} =
       compiler.declareVar(decl[1].ident, node.kind == nkVar,
                           compiler.compileValue(chunk, decl[2]))
       compiler.popVar(chunk, decl[1])
-  of nkBlock: compiler.compileBlock(chunk, node)
+  of nkBlock: discard compiler.compileBlock(chunk, node, true)
   of nkIf: discard compiler.compileIf(chunk, node, true)
   else:
     let ty = compiler.compileValue(chunk, node)
     if ty != compiler.types["void"]:
       chunk.emit(opcDiscard)
 
-proc compileBlock*(node: Node) {.compiler.} =
+proc compileBlock*(node: Node, isStmt: bool): RodType {.compiler.} =
   compiler.pushScope()
-  for s in node.children:
-    compiler.compileStmt(chunk, s)
+  for i, s in node.children:
+    if isStmt:
+      compiler.compileStmt(chunk, s)
+    else:
+      if i < node.children.len - 1:
+        compiler.compileStmt(chunk, s)
+      else:
+        result = compiler.compileValue(chunk, s)
   compiler.popScope(chunk)
+  if isStmt: result = compiler.types["void"]
 
 proc compileScript*(node: Node) {.compiler.} =
   for s in node.children:

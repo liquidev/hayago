@@ -15,7 +15,7 @@ type
     nkBool, nkNumber, nkString, nkIdent
     nkPrefix, nkInfix
     nkVar, nkLet
-    nkIf
+    nkIf, nkWhile, nkFor
   Node* = ref object
     ln*, col*: int
     file*: string
@@ -139,6 +139,13 @@ proc parseExpr*(prec = 0): Node {.rule.} =
       break
     result = parseInfix(scan, result, token)
 
+proc parseWhile*(): Node {.rule.} =
+  discard scan.next()
+  let
+    cond = parseExpr(scan)
+    body = parseBlock(scan)
+  result = Node(kind: nkWhile, children: @[cond, body])
+
 proc parseStmt*(): Node {.rule.} =
   result =
     case scan.peek().kind
@@ -160,6 +167,7 @@ proc parseStmt*(): Node {.rule.} =
       if node.children.len < 1:
         scan.error("Variable declaration expected")
       node
+    of tokWhile: parseWhile(scan)
     else: parseExpr(scan)
 
 proc parseBlock*(): Node {.rule.} =

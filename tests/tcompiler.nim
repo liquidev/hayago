@@ -48,7 +48,7 @@ suite "compiler":
     { var a = 12
       a = a + 3 }
     """)
-  test "if statements":
+  test "if expressions":
     compile("""
     let x = true
     if x {
@@ -60,4 +60,8 @@ suite "compiler":
     } else {
       var w = 5
     }
+    """)
+    compile("""
+    let x = if true { 2 }
+            else { 4 }
     """)
