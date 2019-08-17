@@ -308,7 +308,7 @@ proc myProcedure(x: number) {
 rod procedures can be called in 3 different ways:
 - With regular call syntax – `someProc(arg1, arg2, ...)`
 - With method call syntax – `arg1.someProc(arg2, ...)`
-- With property syntax – `arg1.someProc`
+- With getter syntax – `arg1.someProc`
 
 The two first examples are functionally equivalent. The third example is not
 the same, because this syntax can only be used for calling procs which accept 1
@@ -320,7 +320,7 @@ There's also another way of calling procs: that way is through assignment.
 Only 'setters' can be called this way. A setter is declared by adding `=` to the
 proc's name.
 ```
-proc someProperty=(a: int, b: int) {
+proc someProperty=(a: number, b: number) {
   // do things
 }
 ```
