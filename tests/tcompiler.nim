@@ -65,3 +65,20 @@ suite "compiler":
     let x = if true { 2 }
             else { 4 }
     """)
+  test "while loops":
+    compile("""
+    let x = true
+    while x {
+      let y = 1
+    }
+    """)
+    compile("""
+    while true {
+      let y = 1
+    }
+    """)
+    compile("""
+    while false {
+      let y = 1
+    }
+    """)

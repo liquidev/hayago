@@ -131,7 +131,7 @@ proc pushVar(compiler: Compiler, chunk: var Chunk, variable: Variable) =
     chunk.emit(opcPushG)
     chunk.emit(chunk.getConst(variable.name.rod))
 
-proc compileValue*(node: Node): RodType {.compiler.}
+proc compileExpr(node: Node): RodType {.compiler.}
 
 proc pushConst(node: Node): RodType {.compiler.} =
   case node.kind
@@ -148,7 +148,7 @@ proc pushConst(node: Node): RodType {.compiler.} =
 proc prefix(node: Node): RodType {.compiler.} =
   var
     typeMismatch = false
-  let ty = compiler.compileValue(chunk, node[1])
+  let ty = compiler.compileExpr(chunk, node[1])
   if ty == compiler.types["number"]:
     case node[0].ident
     of "+": discard # + is a noop
@@ -164,8 +164,8 @@ proc infix(node: Node): RodType {.compiler.} =
   if node[0].ident != "=":
     var typeMismatch = false
     let
-      aTy = compiler.compileValue(chunk, node[1])
-      bTy = compiler.compileValue(chunk, node[2])
+      aTy = compiler.compileExpr(chunk, node[1])
+      bTy = compiler.compileExpr(chunk, node[2])
     if aTy == compiler.types["number"] and bTy == compiler.types["number"]:
       case node[0].ident
       of "+": chunk.emit(opcAddN)
@@ -182,7 +182,7 @@ proc infix(node: Node): RodType {.compiler.} =
     case node[1].kind
     of nkIdent:
       var variable = compiler.getVar(node[1])
-      let valTy = compiler.compileValue(chunk, node[2])
+      let valTy = compiler.compileExpr(chunk, node[2])
       if valTy == variable.ty:
         compiler.popVar(chunk, node[1])
       else:
@@ -191,7 +191,7 @@ proc infix(node: Node): RodType {.compiler.} =
       result = compiler.types["void"]
     else: node.error("Cannot assign to '" & ($node.kind)[2..^1] & "'")
 
-proc compileBlock*(node: Node, isStmt: bool): RodType {.compiler.}
+proc compileBlock(node: Node, isStmt: bool): RodType {.compiler.}
 
 proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
   var
@@ -200,7 +200,7 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
     ifTy: RodType
   while pos < node.children.len:
     if node[pos].kind != nkBlock:
-      if compiler.compileValue(chunk, node[pos]) != compiler.types["bool"]:
+      if compiler.compileExpr(chunk, node[pos]) != compiler.types["bool"]:
         node[pos].error("'if' condition must be a boolean")
       inc(pos)
       chunk.emit(opcJumpFwdF)
@@ -231,7 +231,7 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
     if isStmt: compiler.types["void"]
     else: compiler.types["void"]
 
-proc compileValue*(node: Node): RodType {.compiler.} =
+proc compileExpr(node: Node): RodType {.compiler.} =
   case node.kind
   of nkBool, nkNumber:
     result = compiler.pushConst(chunk, node)
@@ -247,21 +247,41 @@ proc compileValue*(node: Node): RodType {.compiler.} =
     result = compiler.compileIf(chunk, node, false)
   else: node.error("Value does not have a valid type")
 
-proc compileStmt*(node: Node) {.compiler.} =
+proc compileWhile(node: Node) {.compiler.} =
+  var
+    isWhileTrue = false
+    afterLoop: int
+  let beforeLoop = chunk.code.len
+  if node[0].kind == nkBool:
+    if node[0].boolVal == true: isWhileTrue = true
+    else: return # while false is a noop
+  if not isWhileTrue:
+    if compiler.compileExpr(chunk, node[0]) != compiler.types["bool"]:
+      node[0].error("'while' condition must be a boolean")
+    chunk.emit(opcJumpFwdF)
+    afterLoop = chunk.emitHole(2)
+  discard compiler.compileBlock(chunk, node[1], true)
+  chunk.emit(opcJumpBack)
+  chunk.emit(uint16(chunk.code.len - beforeLoop))
+  if not isWhileTrue:
+    chunk.fillHole(afterLoop, uint16(chunk.code.len - afterLoop))
+
+proc compileStmt(node: Node) {.compiler.} =
   case node.kind
   of nkLet, nkVar:
     for decl in node.children:
       compiler.declareVar(decl[1].ident, node.kind == nkVar,
-                          compiler.compileValue(chunk, decl[2]))
+                          compiler.compileExpr(chunk, decl[2]))
       compiler.popVar(chunk, decl[1])
   of nkBlock: discard compiler.compileBlock(chunk, node, true)
   of nkIf: discard compiler.compileIf(chunk, node, true)
+  of nkWhile: compiler.compileWhile(chunk, node)
   else:
-    let ty = compiler.compileValue(chunk, node)
+    let ty = compiler.compileExpr(chunk, node)
     if ty != compiler.types["void"]:
       chunk.emit(opcDiscard)
 
-proc compileBlock*(node: Node, isStmt: bool): RodType {.compiler.} =
+proc compileBlock(node: Node, isStmt: bool): RodType {.compiler.} =
   compiler.pushScope()
   for i, s in node.children:
     if isStmt:
@@ -270,7 +290,7 @@ proc compileBlock*(node: Node, isStmt: bool): RodType {.compiler.} =
       if i < node.children.len - 1:
         compiler.compileStmt(chunk, s)
       else:
-        result = compiler.compileValue(chunk, s)
+        result = compiler.compileExpr(chunk, s)
   compiler.popScope(chunk)
   if isStmt: result = compiler.types["void"]
 

@@ -28,6 +28,7 @@ type
     # Execution
     opcJumpFwd = "jumpFwd" ## Jump forward
     opcJumpFwdF = "jumpFwdF" ## Jump forward if false
+    opcJumpBack = "jumpBack" ## Jump backward
     opcHalt = "halt"
   LineInfo* = tuple
     ln, col: int

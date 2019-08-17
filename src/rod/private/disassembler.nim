@@ -13,6 +13,15 @@ proc register*(num: uint8): string =
   result = '[' & $num & ']'
 
 proc disassemble*(chunk: Chunk): string =
+  block dumpHex:
+    var col = 0
+    for i in chunk.code:
+      result.add(i.toHex & " ")
+      inc(col)
+      if col >= 16:
+        result.add("\n")
+        col = 0
+    result.add("\n")
   var
     pc = 0
     lineInfo: LineInfo
@@ -38,11 +47,13 @@ proc disassemble*(chunk: Chunk): string =
     of opcPushL, opcPopL, opcNDiscard:
       result.add($chunk.getU8(pc))
       inc(pc, 1)
-    of opcJumpFwd, opcJumpFwdF:
+    of opcJumpFwd, opcJumpFwdF, opcJumpBack:
       result.add(alignLeft($chunk.getU16(pc), 6))
       result.add("→ ")
       if opc in {opcJumpFwd, opcJumpFwdF}:
         result.add(toHex(pc + chunk.getU16(pc).int, 8))
+      else:
+        result.add(toHex(pc - chunk.getU16(pc).int, 8))
       inc(pc, 2)
     of opcPushTrue, opcPushFalse, opcDiscard,
        opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
