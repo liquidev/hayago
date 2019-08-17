@@ -386,3 +386,6 @@ var
 ```
 As shown above, this feature is most useful with mathematical types, like
 vectors.
+
+Overloaded unary operators accept one parameter, and binary operators accept
+two parameters. `not` and `$` are unary-only.
