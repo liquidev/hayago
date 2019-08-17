@@ -6,6 +6,11 @@ permalink: /man
 
 # Language documentation
 
+#### Note
+
+This documentation is still unfinished, and will grow with new language features
+being added.
+
 ## Syntax
 
 As mentioned, rod's syntax is similar to Nim, so learning it is very easy for
@@ -229,8 +234,155 @@ Two more range iterators are available:
 - `countdown(max, min, step)` – the same as `countup`, but counts in the
   opposite direction. `step` must also be a positive number.
 
-More iterators will be described later.
+## Objects
+
+Objects are homogenous containers of other values. They can contain any set of
+values, and they can even form recursive data structures.
+
+An object is declared like so:
+```
+object MyObject {
+  a: string
+  b: number
+  x, y: bool
+}
+```
+Objects are constructed using the following syntax:
+```
+var myObj = MyObject { a: "test", b: 3.1415926, x: true, y: false }
+```
+All fields of an object must be initialized to a value, although this is subject
+to change.
+
+Fields in objects can be read back from by using the dot syntax:
+```
+echo(myObj.a) // output: test
+```
+Fields can also be assigned to:
+```
+myObj.b = 42
+echo($myObj.b) // output: 42
+```
+
+Note that even if you create a `let` variable with an object value, you can
+still write to that object's fields, because the object itself is mutable. Only
+the variable cannot be reassigned.
+```
+let myObj = MyObject { a: "test", b: 3.1415926, x: true, y: false }
+myObj.x = false // this is legit
+```
 
 ## Procedures
 
-TODO: Procedures
+Procedures in rod are what other languages call 'functions'. Each procedure has
+a name, arguments, and an optional return type.
+In rod, procedures are declared like so:
+```
+proc myProcedure(arg1, arg2: string, arg3: number) -> string {
+  // do things
+}
+```
+
+There are a few things to note here:
+- The procedure's arguments have what's called *type propagation*, which you can
+  notice with `arg1` and `arg2`. It allows you to declare multiple arguments
+  with a common type without having to repeat that type.
+- Unlike Nim, rod uses `->` for specifying the return type. It works better with
+  its brace-based syntax.
+
+The return type of the procedure can be omitted. This will make the return type
+`void`.
+```
+proc myProcedure() {
+  // do things
+}
+```
+
+Procedure arguments are not assignable. That means it's an error to do this:
+```
+proc myProcedure(x: number) {
+  x = 2 // error!
+}
+```
+
+rod procedures can be called in 3 different ways:
+- With regular call syntax – `someProc(arg1, arg2, ...)`
+- With method call syntax – `arg1.someProc(arg2, ...)`
+- With property syntax – `arg1.someProc`
+
+The two first examples are functionally equivalent. The third example is not
+the same, because this syntax can only be used for calling procs which accept 1
+parameter.
+
+### Setters
+
+There's also another way of calling procs: that way is through assignment.
+Only 'setters' can be called this way. A setter is declared by adding `=` to the
+proc's name.
+```
+proc someProperty=(a: int, b: int) {
+  // do things
+}
+```
+Setters must always have two arguments. They can be called using the following
+syntax:
+```
+a.someProperty = b
+```
+In a nutshell, they look exactly like an object field assignment. However, a
+proc is called instead.
+
+Object field assigmnents take precedence over setters:
+```
+object Vec2 {
+  x, y: number
+}
+
+var myVec = Vec2 { x: 1, y: 2 }
+myVec.x = 3 // sets the field directly
+
+proc x=(vec: Vec2, val: number) {
+  vec.x = val
+}
+
+myVec.x = 4 // also sets the field directly
+```
+To avoid this, the field must be declared with a different name. The idiomatic
+way is to prefix the field with `f`:
+```
+object Vec2 {
+  fX, fY: number
+}
+
+var myVec = Vec2 { x: 1, y: 2 }
+myVec.fX = 3 // sets the field directly
+
+proc x=(vec: Vec2, val: number) {
+  vec.fX = val
+}
+
+myVec.x = 4 // calls the setter
+```
+
+### Operator overloading
+
+All valid rod operators can be overloaded. Currently, this only includes
+built-in operators, but support for custom operators is planned.
+
+To overload an operator, simply name your proc with it:
+```
+object Vec2 {
+  x, y: number
+}
+
+proc +(a, b: Vec2) -> Vec2 {
+  result = Vec2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+var
+  a = Vec2 { x: 3, y: 2 },
+  b = Vec2 { x: 2, y: 3 },
+  c = a + b // Vec2 { x: 5, y: 5 }
+```
+As shown above, this feature is most useful with mathematical types, like
+vectors.
