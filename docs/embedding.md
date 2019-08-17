@@ -1,7 +1,7 @@
 ---
 layout: page
 title: Embedding
-permaling: /embed
+permalink: /embed
 ---
 
 # Embedding guide
