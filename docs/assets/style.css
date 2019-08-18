@@ -87,3 +87,17 @@ pre, code {
 pre {
   padding-left: 16px;
 }
+
+table {
+  margin-left: 16px;
+  border-collapse: collapse;
+}
+
+table, th, td {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+th, td {
+  padding: 6px 8px 6px 8px;
+  min-width: 32px;
+}
