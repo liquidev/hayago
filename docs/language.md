@@ -14,7 +14,7 @@ being added.
 ## Syntax
 
 As mentioned, rod's syntax is similar to Nim, so learning it is very easy for
-existing Nim users. The only large difference is that rod uses braces instead of
+existing Nim users. The only major difference is that rod uses braces instead of
 indentation, to make parsing simpler.
 
 ### Comments
@@ -99,6 +99,7 @@ x = 3 // error: attempt to reassign a 'let' variable
 Even though `let` variables cannot be reassigned, that does not mean their value
 cannot be changed: if their value is an object, its fields can be modified just
 fine.
+
 Variables in rod are statically typed. That means that a number variable will
 always stay a number variable, until it goes out of scope. The type of a
 variable cannot be changed.
