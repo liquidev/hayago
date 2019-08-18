@@ -230,7 +230,7 @@ the block.
 var x = -1
 while x <= 100 {
   x = x + 1
-  if x mod 2 == 0 {
+  if x mod 2 == 1 {
     continue
   }
   echo($x)
