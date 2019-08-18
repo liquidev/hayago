@@ -21,12 +21,13 @@ type
     # Punctuation
     tokLPar = "(", tokRPar = ")"
     tokLBrace = "{", tokRBrace = "}"
-    tokDot = ".", tokComma = ",", tokSemi = ";"
+    tokDot = ".", tokComma = ",", tokColon = ":"
     # Keywords
     tokVar = "var", tokLet = "let"
     tokIf = "if", tokElif = "elif", tokElse = "else"
     tokWhile = "while"
     tokFor = "for", tokIn = "in"
+    tokBreak = "break", tokContinue = "continue"
     # Special
     tokEnd = "(end of input)"
   Token* = object
@@ -78,7 +79,8 @@ const Keywords = {
   "var": tokVar, "let": tokLet,
   "if": tokIf, "elif": tokElif, "else": tokElse,
   "while": tokWhile,
-  "for": tokFor, "in": tokIn
+  "for": tokFor, "in": tokIn,
+  "break": tokBreak, "continue": tokContinue
 }.toTable()
 
 const UTF8Chars = {'\x80'..'\xff'}
@@ -116,9 +118,9 @@ proc linefeed*(scan: var Scanner): bool =
     case scan.current
     of '\x00':
       result = true
-    of Newlines:
+    of Newlines, ';':
       result = true
-      while scan.current in Newlines:
+      while scan.current in Newlines + {';'}:
         scan.advance()
       continue
     of Whitespace - Newlines:
@@ -135,6 +137,16 @@ proc linefeed*(scan: var Scanner): bool =
     else: discard
     break
 
+proc peekLinefeed*(scan: var Scanner): bool =
+  let
+    pos = scan.pos
+    ln = scan.ln
+    col = scan.col
+  result = scan.linefeed()
+  scan.pos = pos
+  scan.ln = ln
+  scan.col = col
+
 proc skip(scan: var Scanner) =
   discard scan.linefeed()
 
@@ -150,7 +162,7 @@ proc next*(scan: var Scanner): Token =
   of '{': scan.advance(); result = Token(kind: tokLBrace)
   of '}': scan.advance(); result = Token(kind: tokRBrace)
   of ',': scan.advance(); result = Token(kind: tokComma)
-  of ';': scan.advance(); result = Token(kind: tokSemi)
+  of ':': scan.advance(); result = Token(kind: tokColon)
   of OperatorChars:
     var operator = ""
     while scan.current in OperatorChars:
@@ -168,7 +180,7 @@ proc next*(scan: var Scanner): Token =
     while scan.current in Digits:
       number.add(scan.current)
       scan.advance()
-    if scan.current == '.':
+    if scan.current == '.' and scan.get(2) != "..":
       number.add(scan.current)
       scan.advance()
       while scan.current in Digits:

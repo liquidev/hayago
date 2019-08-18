@@ -19,14 +19,24 @@ type
     opcPopL = "popL" ## Pop local
     opcDiscard = "discard" ## Discard 1 value
     opcNDiscard = "nDiscard" ## Discard n values
-    # Numbers
+    # Arithmetic operations
     opcNegN = "negN" ## Negate number
     opcAddN = "addN" ## Add numbers
     opcSubN = "subN" ## Subtract numbers
     opcMultN = "multN" ## Multiply numbers
     opcDivN = "divN" ## Divide numbers
+    # Logic operations
+    opcInvB = "invB" ## Invert bool
+    # Relational operations
+    opcEqB = "eqB" ## Equal bools
+    opcEqN = "eqN" ## Equal numbers
+    opcLessN = "lessN" ## Number less than
+    opcLessEqN = "lessEqN" ## Number less than or equal
+    opcGreaterN = "greaterN" ## Number greater than
+    opcGreaterEqN = "greaterEqN" ## Number greater than or equal
     # Execution
     opcJumpFwd = "jumpFwd" ## Jump forward
+    opcJumpFwdT = "jumpFwdT" ## Jump forward if true
     opcJumpFwdF = "jumpFwdF" ## Jump forward if false
     opcJumpBack = "jumpBack" ## Jump backward
     opcHalt = "halt"

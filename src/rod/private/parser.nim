@@ -16,6 +16,7 @@ type
     nkPrefix, nkInfix
     nkVar, nkLet
     nkIf, nkWhile, nkFor
+    nkBreak, nkContinue
   Node* = ref object
     ln*, col*: int
     file*: string
@@ -168,6 +169,8 @@ proc parseStmt*(): Node {.rule.} =
         scan.error("Variable declaration expected")
       node
     of tokWhile: parseWhile(scan)
+    of tokBreak: Node(kind: nkBreak)
+    of tokContinue: Node(kind: nkContinue)
     else: parseExpr(scan)
 
 proc parseBlock*(): Node {.rule.} =

@@ -36,26 +36,27 @@ proc disassemble*(chunk: Chunk): string =
       result.add(align($li.ln, 4))
     lineInfo = li
     result.add("  " & alignLeft($opc, 12))
-    inc(pc)
     case opc
     of opcPushN:
-      result.add($chunk.consts[rvNumber][chunk.getU16(pc)])
-      inc(pc, 2)
+      result.add($chunk.consts[rvNumber][chunk.getU16(pc + 1)])
+      inc(pc, 3)
     of opcPushG, opcPopG:
-      result.add(chunk.consts[rvString][chunk.getU16(pc)].str)
-      inc(pc, 2)
+      result.add(chunk.consts[rvString][chunk.getU16(pc + 1)].str)
+      inc(pc, 3)
     of opcPushL, opcPopL, opcNDiscard:
-      result.add($chunk.getU8(pc))
-      inc(pc, 1)
-    of opcJumpFwd, opcJumpFwdF, opcJumpBack:
-      result.add(alignLeft($chunk.getU16(pc), 6))
-      result.add("→ ")
-      if opc in {opcJumpFwd, opcJumpFwdF}:
-        result.add(toHex(pc + chunk.getU16(pc).int, 8))
-      else:
-        result.add(toHex(pc - chunk.getU16(pc).int, 8))
+      result.add($chunk.getU8(pc + 1))
       inc(pc, 2)
+    of opcJumpFwd, opcJumpFwdF, opcJumpFwdT, opcJumpBack:
+      result.add(alignLeft($chunk.getU16(pc + 1), 6))
+      result.add("→ ")
+      if opc in {opcJumpFwd, opcJumpFwdF, opcJumpFwdT}:
+        result.add(toHex(pc + chunk.getU16(pc + 1).int, 8))
+      else:
+        result.add(toHex(pc - chunk.getU16(pc + 1).int, 8))
+      inc(pc, 3)
     of opcPushTrue, opcPushFalse, opcDiscard,
+       opcInvB, opcEqB,
        opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
-       opcHalt: discard
+       opcEqN, opcLessN, opcLessEqN, opcGreaterN, opcGreaterEqN,
+       opcHalt: inc(pc, 1)
     result.add('\n')

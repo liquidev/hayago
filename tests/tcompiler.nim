@@ -82,3 +82,11 @@ suite "compiler":
       let y = 1
     }
     """)
+    compile("""
+    var
+      x = 0,
+      stop = false
+    while x < 10 and not stop {
+
+    }
+    """)
