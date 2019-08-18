@@ -148,6 +148,52 @@ The type of an `if` expression is inferred by the following conditions:
   raised. All other blocks must have that same type (also inferred from the last
   statement of their corresponding blocks).
 
+#### `and` and `or` operators
+
+These two operators are special, because they're *short-circuiting*. That means
+if one of their operands makes the result 'obvious', the other operand will not
+be evaluated. Example:
+
+```
+proc a() -> bool {
+  echo("a")
+  result = true
+}
+
+proc b() -> bool {
+  echo("b")
+  result = false
+}
+
+a() or b()
+```
+Output:
+```
+a
+```
+As you can see, the second operand is not evaluated, because if the first
+operand is `true`, we know that the result will always be `true`, according to
+the truth table of the `OR` logic operation:
+
+| A | B | Output |
+| --- | --- | --- |
+| 0 | 0 | 0 |
+| 0 | 1 | 1 |
+| 1 | 0 | 1 |
+| 1 | 1 | 1 |
+
+A similar thing happens with `and`: if the first operand evaluates to `false`,
+the second operand will not be evaluated, because we know that if one operand of
+the `AND` logic operation is `false`, the output will always be `false`.
+
+| A | B | Output |
+| --- | --- | --- |
+| 0 | 0 | 0 |
+| 0 | 1 | 0 |
+| 1 | 0 | 0 |
+| 1 | 1 | 1 |
+
+
 ### `while` loop
 
 A `while` loop is the simplest kind of loop. All it does is it executes its body
@@ -305,6 +351,30 @@ proc myProcedure(x: number) {
 }
 ```
 
+To return a value from a procedure, the `return` statement is used. It halts the
+execution of the procedure immediately, and returns the associated value (which
+*can* be empty, in that case, the value returned is the value of the `result`
+variable, which is described below).
+```
+proc theAnswer() -> number {
+  return 42
+}
+```
+It's important to note that the return statement is *always* the last statement
+in a block. This means that this:
+```
+proc doSomeCalculations() -> number {
+  return 2
+  -42.sin
+}
+```
+Is equivalent to this:
+```
+proc doSomeCalculations() -> number {
+  return 2 - 42.sin
+}
+```
+
 rod procedures can be called in 3 different ways:
 - With regular call syntax – `someProc(arg1, arg2, ...)`
 - With method call syntax – `arg1.someProc(arg2, ...)`
@@ -313,6 +383,39 @@ rod procedures can be called in 3 different ways:
 The two first examples are functionally equivalent. The third example is not
 the same, because this syntax can only be used for calling procs which accept 1
 parameter.
+
+### The `result` variable
+
+`result` is a special, implicitly declared variable present in all `proc`s with
+a non-`void` return type. It is a convenience feature which helps avoid
+unnecessary temporary variable declarations:
+```
+// without result
+proc fac(n: number) -> number {
+  var r = 1
+  for i in 1..n {
+    r = r * i
+  }
+  return r
+}
+
+// with result
+proc fac(n: number) -> number {
+  result = 1
+  for i in 1..n {
+    result = result * i
+  }
+}
+```
+Note how when we use `result` we don't need an extra `return` to actually
+return the result of our operation. That is the main purpose of `result`: if
+an accumulative operation is being done (eg. calculating the factorial of some
+number), one can avoid an extra `return` statement at the end of the procedure.
+In fact, `result` should be preferred over `return` whenever its flow control
+capabilities are not required.
+
+The initial value of `result` is dependent on the return type of the procedure.
+It is always the default value for that type (eg. `0` for numbers).
 
 ### Setters
 
