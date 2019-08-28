@@ -4,7 +4,10 @@
 # licensed under the MIT license
 #--
 
+import tables
+
 import common
+import types
 import value
 
 type
@@ -44,11 +47,27 @@ type
     ln, col: int
     runLength: int
   Chunk* = object
-    file*: string
+    module*: Module
     code*: seq[uint8]
     ln*, col*: int
     lineInfo: seq[LineInfo]
     consts*: OrdTable(RodValueKind, seq[RodValue])
+  Module* = object
+    name*: string
+    types*: Table[string, RodType]
+    globals*: Table[string, Variable]
+  VariableKind* = enum
+    vkGlobal
+    vkLocal
+  Variable* = object
+    ty*: RodType
+    name*: string
+    isMutable*, isSet*: bool
+    case kind*: VariableKind
+    of vkGlobal:
+      discard
+    of vkLocal:
+      stackPos*, scope*: int
 
 proc addLineInfo*(chunk: var Chunk, n: int) =
   if chunk.lineInfo.len > 0:
@@ -103,3 +122,11 @@ proc getLineInfo*(chunk: Chunk, i: int): LineInfo =
 
 proc initChunk*(): Chunk =
   result = Chunk()
+
+proc addSimpleType*(module: var Module, name: string) =
+  module.types.add(name, RodType(name: name, kind: tkSimple))
+
+proc initModule*(): Module =
+  result.addSimpleType("void")
+  result.addSimpleType("bool")
+  result.addSimpleType("number")

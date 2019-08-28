@@ -28,6 +28,7 @@ type
     tokWhile = "while"
     tokFor = "for", tokIn = "in"
     tokBreak = "break", tokContinue = "continue"
+    tokObject = "object"
     # Special
     tokEnd = "(end of input)"
   Token* = object
@@ -80,7 +81,8 @@ const Keywords = {
   "if": tokIf, "elif": tokElif, "else": tokElse,
   "while": tokWhile,
   "for": tokFor, "in": tokIn,
-  "break": tokBreak, "continue": tokContinue
+  "break": tokBreak, "continue": tokContinue,
+  "object": tokObject
 }.toTable()
 
 const UTF8Chars = {'\x80'..'\xff'}
@@ -222,10 +224,12 @@ proc peek*(scan: var Scanner): Token =
   scan.ln = ln
   scan.col = col
 
-proc expect*(scan: var Scanner, kind: TokenKind): Token {.discardable.} =
+proc expect*(scan: var Scanner, kind: TokenKind,
+             customError = ""): Token {.discardable.} =
   result = scan.next()
   if result.kind != kind:
-    scan.error($kind & " expected, got " & $result.kind)
+    scan.error((if customError == "": $kind else: customError) &
+               " expected, got " & $result.kind)
 
 proc expectOp*(scan: var Scanner, op: string) =
   let tok = scan.next()

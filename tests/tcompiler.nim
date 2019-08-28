@@ -27,9 +27,10 @@ template compile(input: string) =
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
     var
+      module = initModule()
       chunk = initChunk()
       cp = initCompiler()
-    cp.compileScript(chunk, ast)
+    cp.compileScript(chunk, module, ast)
   dumpTokens(input)
   echo ast
   echo chunk.disassemble()

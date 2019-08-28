@@ -4,7 +4,18 @@
 # licensed under the MIT license
 #--
 
+import tables
+
 type
-  RodType* = tuple
-    id: int
+  RodTypeKind* = enum
+    tkSimple
+    tkObject
+  RodType* = ref object
+    name*: string
+    case kind*: RodTypeKind
+    of tkSimple: discard
+    of tkObject:
+      fields*: Table[string, Field]
+  Field* = tuple
     name: string
+    ty: RodType

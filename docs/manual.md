@@ -1,7 +1,7 @@
 ---
 layout: page
 title: Manual
-permalink: /man
+permalink: /manual
 ---
 
 # Language documentation

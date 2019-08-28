@@ -17,6 +17,7 @@ type
     nkVar, nkLet
     nkIf, nkWhile, nkFor
     nkBreak, nkContinue
+    nkObject, nkObjectFields
   Node* = ref object
     ln*, col*: int
     file*: string
@@ -80,16 +81,16 @@ proc precedence(token: Token): int =
     of tokOperator: token.prec
     else: 0
 
-proc parseExpr*(prec = 0): Node {.rule.}
+proc parseExpr(prec = 0): Node {.rule.}
 
-proc parseParExpr*(): Node {.rule.} =
+proc parseParExpr(): Node {.rule.} =
   result = parseExpr(scan)
   if scan.next().kind != tokRPar:
     scan.error("Right paren ')' expected")
 
-proc parseBlock*(): Node {.rule.}
+proc parseBlock(): Node {.rule.}
 
-proc parseIf*(): Node {.rule.} =
+proc parseIf(): Node {.rule.} =
   var children = @[
     parseExpr(scan),
     parseBlock(scan)
@@ -105,7 +106,7 @@ proc parseIf*(): Node {.rule.} =
     children.add(parseBlock(scan))
   result = Node(kind: nkIf, children: children)
 
-proc parsePrefix*(token: Token): Node {.rule.} =
+proc parsePrefix(token: Token): Node {.rule.} =
   case token.kind
   of tokTrue: result = Node(kind: nkBool, boolVal: true)
   of tokFalse: result = Node(kind: nkBool, boolVal: false)
@@ -120,7 +121,7 @@ proc parsePrefix*(token: Token): Node {.rule.} =
   of tokIf: result = parseIf(scan)
   else: scan.error("Unexpected token: " & $token.kind)
 
-proc parseInfix*(left: Node, token: Token): Node {.rule.} =
+proc parseInfix(left: Node, token: Token): Node {.rule.} =
   case token.kind
   of tokOperator:
     if token.operator notin ["not", "->", "$"]:
@@ -129,7 +130,7 @@ proc parseInfix*(left: Node, token: Token): Node {.rule.} =
                                 left, parseExpr(scan, token.prec)])
   else: scan.error("Unexpected token: " & $token.kind)
 
-proc parseExpr*(prec = 0): Node {.rule.} =
+proc parseExpr(prec = 0): Node {.rule.} =
   var token = scan.next()
   result = parsePrefix(scan, token)
   if result == nil:
@@ -140,42 +141,77 @@ proc parseExpr*(prec = 0): Node {.rule.} =
       break
     result = parseInfix(scan, result, token)
 
-proc parseWhile*(): Node {.rule.} =
+proc parseType(): Node {.rule.} =
+  let typeExpr = parseExpr(scan)
+  if typeExpr.kind in {nkIdent}:
+    result = typeExpr
+  else:
+    scan.error("Type expected")
+
+proc parseVar(): Node {.rule.} =
+  result = Node(kind: if scan.next().kind == tokVar: nkVar
+                      else: nkLet)
+  while true:
+    let name = scan.expect(tokIdent)
+    scan.expectOp("=")
+    let val = scan.parseExpr()
+    result.children.add(Node(kind: nkInfix, children: @[
+                          Node(kind: nkIdent, ident: "="),
+                          Node(kind: nkIdent, ident: name.ident), val]))
+    if scan.peek().kind == tokComma:
+      discard scan.next()
+      continue
+    break
+  if result.children.len < 1:
+    scan.error("Variable declaration expected")
+
+proc parseWhile(): Node {.rule.} =
   discard scan.next()
   let
     cond = parseExpr(scan)
     body = parseBlock(scan)
   result = Node(kind: nkWhile, children: @[cond, body])
 
-proc parseStmt*(): Node {.rule.} =
+proc parseObject(): Node {.rule.} =
+  discard scan.next()
+  let name = parseType(scan)
+  scan.expect(tokLBrace)
+  var fields: seq[Node]
+  fields.add(Node(kind: nkIdent, ident: name.ident))
+  while scan.peek().kind != tokRBrace:
+    if scan.atEnd:
+      scan.error("Missing right brace '}'")
+    if scan.peek().kind != tokIdent:
+      scan.error("Field name expected")
+    var fieldNames: seq[Node]
+    while scan.peek().kind == tokIdent:
+      fieldNames.add(Node(kind: nkIdent, ident: scan.next().ident))
+      var nextTok = scan.next().kind
+      case nextTok
+      of tokComma: continue
+      of tokColon: break
+      else: scan.error("Comma ',' or colon ':' expected")
+    var ty = parseType(scan)
+    fieldNames.add(ty)
+    fields.add(Node(kind: nkObjectFields, children: fieldNames))
+    if not scan.linefeed() and scan.peek().kind != tokRBrace:
+      scan.error("Line feed expected after object field")
+  discard scan.next()
+  result = Node(kind: nkObject, children: fields)
+
+proc parseStmt(): Node {.rule.} =
   result =
     case scan.peek().kind
     of tokLBrace: parseBlock(scan)
-    of tokVar, tokLet:
-      var node = Node(kind: if scan.next().kind == tokVar: nkVar
-                            else: nkLet)
-      while true:
-        let name = scan.expect(tokIdent)
-        scan.expectOp("=")
-        let val = scan.parseExpr()
-        node.children.add(Node(kind: nkInfix, children: @[
-                            Node(kind: nkIdent, ident: "="),
-                            Node(kind: nkIdent, ident: name.ident), val]))
-        if scan.peek().kind == tokComma:
-          discard scan.next()
-          continue
-        break
-      if node.children.len < 1:
-        scan.error("Variable declaration expected")
-      node
+    of tokVar, tokLet: parseVar(scan)
+    of tokObject: parseObject(scan)
     of tokWhile: parseWhile(scan)
     of tokBreak: Node(kind: nkBreak)
     of tokContinue: Node(kind: nkContinue)
     else: parseExpr(scan)
 
-proc parseBlock*(): Node {.rule.} =
-  if scan.next().kind != tokLBrace:
-    scan.error("Left brace '{' expected")
+proc parseBlock(): Node {.rule.} =
+  scan.expect(tokLBrace)
   var stmts: seq[Node]
   while scan.peek().kind != tokRBrace:
     if scan.atEnd:
