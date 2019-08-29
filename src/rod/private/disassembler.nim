@@ -9,9 +9,6 @@ import strutils
 import chunk
 import value
 
-proc register*(num: uint8): string =
-  result = '[' & $num & ']'
-
 proc disassemble*(chunk: Chunk): string =
   block dumpHex:
     var col = 0
