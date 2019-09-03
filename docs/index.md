@@ -20,7 +20,7 @@ Its main goals are:
   use on a large variety of systems. It also avoids the use of any OS-specific
   APIs, making it run on any OS Nim supports.
 
-```
+```rod
 var hello = "Hello, rod!"
 
 object Greeter {

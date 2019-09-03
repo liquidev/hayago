@@ -4,39 +4,43 @@
 
 # rod
 
-A fast, small, statically typed embeddable scripting language for Nim,
-with a modern syntax inspired by Nim itself.
+**rod** is a small, fast, embeddable, statically typed scripting language,
+written in Nim. Its syntax is highly inspired by Nim itself, with a bit of C
+mixed in.
 
 | **Note** | rod is not finished yet. This readme is a draft of the language's goals. |
 | --- | --- |
 
-```nim,c
-proc hello(target: string) -> string {
-  result = "Hello, " & target & "!"
+Its main goals are:
+
+- **Simplicity.** The language is purposefully simple, for easy learning.
+  It also prevents bugs in the implementation.
+- **Speed.** While rod isn't the fastest scripting language out there, it uses
+  quite a few optimizations to make execution suitable for real-time
+  applications, like games.
+- **Easy embedding.** Embedding rod in your application is as simple as listing
+  all the things you need to be available in the VM. It's as easy as it can get.
+- **Portability.** rod avoids tricks like NaN tagging to make it suitable for
+  use on a large variety of systems. It also avoids the use of any OS-specific
+  APIs, making it run on any OS Nim supports.
+
+```nim
+var hello = "Hello, rod!"
+
+object Greeter {
+  target: string
 }
 
-proc sayHello(target: string) {
-  echo(target.hello)
+proc newGreeter(target: string) -> Greeter {
+  result = Greeter {
+    target: target
+  }
 }
 
-sayHello("World")
-```
-
-```nim,c
-object Vec2 {
-  x, y: number
+proc greet(greeter: Greeter) {
+  echo("Hello, " & greeter.target & "!")
 }
 
-proc vec2(x, y: number) -> Vec2 {
-  result = Vec2(x: x, y: y)
-}
-
-proc +(a, b: Vec2) -> Vec2 {
-  result = vec2(a.x + b.x, y: a.y + b.y)
-}
-
-var
-  a = vec2(10, 10),
-  b = vec2(20, 30),
-  c = a + b
+var worldGreeter = newGreeter("World")
+worldGreeter.greet()
 ```

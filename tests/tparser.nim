@@ -42,4 +42,19 @@ suite "parser":
         b, c: string
         testing: obj
       }
+
+      object Pair[T, U] {
+        a: T
+        b: U
+      }
+    """)
+  test "indexing":
+    parse("""
+      var x = a[2]
+      var y = m[0][1]
+    """)
+  test "dot":
+    parse("""
+      var x = a.x
+      var y = a.x[3]
     """)

@@ -21,7 +21,7 @@ indentation, to make parsing simpler.
 
 Comments in rod look exactly as in C++. Only single-line comments are supported.
 
-```
+```rod
 // This is a comment
 ```
 
@@ -29,7 +29,7 @@ Comments in rod look exactly as in C++. Only single-line comments are supported.
 
 rod supports ordinary number and string literals.
 
-```
+```rod
 3.141592        // This is a number literal
 "Hello, world!" // This is a string literal
 ```
@@ -64,13 +64,13 @@ declarations. Statements in rod are delimited with line breaks.
 
 rod makes heavy use of blocks throughout the language's syntax, here's what they
 look like:
-```
+```rod
 {
   echo("Hello, world!")
 }
 ```
 Another, more compact style is also supported:
-```
+```rod
 { echo("Hello, world!")
   echo("Going compact!") } // notice how a line break isn't required here
 ```
@@ -81,7 +81,7 @@ can also be used as a statement terminator.
 
 Variables are a very important part of any language. rod offers two ways of
 declaring them:
-```
+```rod
 var
   a = 2,
   b = 3
@@ -92,7 +92,7 @@ let
 The rules behind these two definition types are the same as in Nim: `var`
 declares a regular variable, and `let` declares a single-assignment variable.
 Attempting to assign to such a variable twice will result in a compile error:
-```
+```rod
 let x = 2
 x = 3 // error: attempt to reassign a 'let' variable
 ```
@@ -103,7 +103,7 @@ fine.
 Variables in rod are statically typed. That means that a number variable will
 always stay a number variable, until it goes out of scope. The type of a
 variable cannot be changed.
-```
+```rod
 var x = 3
 x = "Hello, world!" // error: type mismatch, attempt to assign a string to a
                     // number variable
@@ -122,7 +122,7 @@ In rod, `if` is an expression. That means it can be used in places like variable
 values, proc parameters, etc.
 
 The basic syntax of an `if` expression is like so:
-```
+```rod
 if condition {
   // do things
 } elif condition {
@@ -155,7 +155,7 @@ These two operators are special, because they're *short-circuiting*. That means
 if one of their operands makes the result 'obvious', the other operand will not
 be evaluated. Example:
 
-```
+```rod
 proc a() -> bool {
   echo("a")
   result = true
@@ -201,20 +201,20 @@ A `while` loop is the simplest kind of loop. All it does is it executes its body
 as long as its condition stays `true`.
 
 The syntax of a `while` loop is like so:
-```
+```rod
 while condition {
   // do things
 }
 ```
 An infinite loop may be created by setting the condition to a `true` constant.
-```
+```rod
 while true {
   // do things indefinitely
 }
 ```
 
 A `while` loop can be stopped by using the `break` keyword.
-```
+```rod
 var x = 0
 while true {
   x = x + 1
@@ -225,7 +225,7 @@ while true {
 ```
 The `continue` keyword will cause the loop to jump back to the beginning of
 the block.
-```
+```rod
 // List even numbers from 0 to 100
 var x = -1
 while x <= 100 {
@@ -241,7 +241,7 @@ while x <= 100 {
 
 The `for` loop is an advanced version of the `while` loop. Instead of iterating
 as long as a condition is met, it uses *iterators*.
-```
+```rod
 for variable in iterator {
   // do things
 }
@@ -252,7 +252,7 @@ for variable in iterator {
 rod currently doesn't have a way of defining custom iterators, but a few are
 provided in its standard library. First of all, the range iterators:
 
-```
+```rod
 // displays numbers from 0 to 100
 for i in 0..100 {
   echo(i)
@@ -262,7 +262,7 @@ for i in 0..100 {
 This is the inclusive range operator. It iterates over all numbers in the given
 range, here from 0 to 100.
 
-```
+```rod
 for i in 0..<100 {
   echo(i)
 }
@@ -287,7 +287,7 @@ Objects are homogenous containers of other values. They can contain any set of
 values, and they can even form recursive data structures.
 
 An object is declared like so:
-```
+```rod
 object MyObject {
   a: string
   b: number
@@ -295,18 +295,18 @@ object MyObject {
 }
 ```
 Objects are constructed using the following syntax:
-```
+```rod
 var myObj = MyObject { a: "test", b: 3.1415926, x: true, y: false }
 ```
 All fields of an object must be initialized to a value, although this is subject
 to change.
 
 Fields in objects can be read back from by using the dot syntax:
-```
+```rod
 echo(myObj.a) // output: test
 ```
 Fields can also be assigned to:
-```
+```rod
 myObj.b = 42
 echo($myObj.b) // output: 42
 ```
@@ -314,7 +314,7 @@ echo($myObj.b) // output: 42
 Note that even if you create a `let` variable with an object value, you can
 still write to that object's fields, because the object itself is mutable. Only
 the variable cannot be reassigned.
-```
+```rod
 let myObj = MyObject { a: "test", b: 3.1415926, x: true, y: false }
 myObj.x = false // this is legit
 ```
@@ -324,7 +324,7 @@ myObj.x = false // this is legit
 Procedures in rod are what other languages call 'functions'. Each procedure has
 a name, arguments, and an optional return type.
 In rod, procedures are declared like so:
-```
+```rod
 proc myProcedure(arg1, arg2: string, arg3: number) -> string {
   // do things
 }
@@ -339,14 +339,14 @@ There are a few things to note here:
 
 The return type of the procedure can be omitted. This will make the return type
 `void`.
-```
+```rod
 proc myProcedure() {
   // do things
 }
 ```
 
 Procedure arguments are not assignable. That means it's an error to do this:
-```
+```rod
 proc myProcedure(x: number) {
   x = 2 // error!
 }
@@ -356,21 +356,21 @@ To return a value from a procedure, the `return` statement is used. It halts the
 execution of the procedure immediately, and returns the associated value (which
 *can* be empty, in that case, the value returned is the value of the `result`
 variable, which is described below).
-```
+```rod
 proc theAnswer() -> number {
   return 42
 }
 ```
 It's important to note that the return statement is *always* the last statement
 in a block. This means that this:
-```
+```rod
 proc doSomeCalculations() -> number {
   return 2
   -42.sin
 }
 ```
 Is equivalent to this:
-```
+```rod
 proc doSomeCalculations() -> number {
   return 2 - 42.sin
 }
@@ -390,7 +390,7 @@ parameter.
 `result` is a special, implicitly declared variable present in all `proc`s with
 a non-`void` return type. It is a convenience feature which helps avoid
 unnecessary temporary variable declarations:
-```
+```rod
 // without result
 proc fac(n: number) -> number {
   var r = 1
@@ -423,21 +423,21 @@ It is always the default value for that type (eg. `0` for numbers).
 There's also another way of calling procs: that way is through assignment.
 Only 'setters' can be called this way. A setter is declared by adding `=` to the
 proc's name.
-```
+```rod
 proc someProperty=(a: number, b: number) {
   // do things
 }
 ```
 Setters must always have two arguments. They can be called using the following
 syntax:
-```
+```rod
 a.someProperty = b
 ```
 In a nutshell, they look exactly like an object field assignment. However, a
 proc is called instead.
 
 Object field assigmnents take precedence over setters:
-```
+```rod
 object Vec2 {
   x, y: number
 }
@@ -453,7 +453,7 @@ myVec.x = 4 // also sets the field directly
 ```
 To avoid this, the field must be declared with a different name. The idiomatic
 way is to prefix the field with `f`:
-```
+```rod
 object Vec2 {
   fX, fY: number
 }
@@ -474,7 +474,7 @@ All valid rod operators can be overloaded. Currently, this only includes
 built-in operators, but support for custom operators is planned.
 
 To overload an operator, simply name your proc with it:
-```
+```rod
 object Vec2 {
   x, y: number
 }

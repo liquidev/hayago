@@ -21,6 +21,7 @@ type
     # Punctuation
     tokLPar = "(", tokRPar = ")"
     tokLBrace = "{", tokRBrace = "}"
+    tokLBrk = "[", tokRBrk = "]"
     tokDot = ".", tokComma = ",", tokColon = ":"
     # Keywords
     tokVar = "var", tokLet = "let"
@@ -163,6 +164,8 @@ proc next*(scan: var Scanner): Token =
   of ')': scan.advance(); result = Token(kind: tokRPar)
   of '{': scan.advance(); result = Token(kind: tokLBrace)
   of '}': scan.advance(); result = Token(kind: tokRBrace)
+  of '[': scan.advance(); result = Token(kind: tokLBrk)
+  of ']': scan.advance(); result = Token(kind: tokRBrk)
   of ',': scan.advance(); result = Token(kind: tokComma)
   of ':': scan.advance(); result = Token(kind: tokColon)
   of OperatorChars:

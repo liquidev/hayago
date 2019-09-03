@@ -20,6 +20,9 @@ type
     opcPopG = "popG" ## Pop global
     opcPushL = "pushL" ## Push local
     opcPopL = "popL" ## Pop local
+    opcConsObj = "consObj" ## Construct object
+    opcPushF = "pushF" ## Push field
+    opcPopF = "popF" ## Pop field
     opcDiscard = "discard" ## Discard 1 value
     opcNDiscard = "nDiscard" ## Discard n values
     # Arithmetic operations
@@ -123,10 +126,43 @@ proc getLineInfo*(chunk: Chunk, i: int): LineInfo =
 proc initChunk*(): Chunk =
   result = Chunk()
 
+proc `$`*(module: Module): string =
+  result = "Module " & module.name
+
+  result.add("\n  globals:")
+  for n, v in module.globals:
+    result.add("\n   - " & n & ": ")
+    if v.isMutable: result.add("var ")
+    else: result.add("let ")
+    result.add(v.ty.name)
+
+  result.add("\n  types:")
+  for n, ty in module.types:
+    result.add("\n   - " & n & ": ")
+    case ty.kind
+    of tkSimple: result.add("simple")
+    of tkObject:
+      result.add("object")
+      for n, f in ty.objFields:
+        result.add("\n    - " & n & ": " & f.ty.name)
+
 proc addSimpleType*(module: var Module, name: string) =
   module.types.add(name, RodType(name: name, kind: tkSimple))
 
-proc initModule*(): Module =
-  result.addSimpleType("void")
-  result.addSimpleType("bool")
-  result.addSimpleType("number")
+proc ty*(module: Module, name: string): RodType =
+  result = module.types[name]
+
+proc load*(module: var Module, other: Module) =
+  for n, v in other.globals:
+    module.globals.add(n, v)
+  for n, ty in other.types:
+    module.types.add(n, ty)
+
+var rodSystem = Module(name: "system")
+rodSystem.addSimpleType("void")
+rodSystem.addSimpleType("bool")
+rodSystem.addSimpleType("number")
+
+proc initModule*(name: string): Module =
+  result = Module(name: name)
+  result.load(rodSystem)

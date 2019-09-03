@@ -27,12 +27,13 @@ template compile(input: string) =
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
     var
-      module = initModule()
+      module = initModule("testcase")
       chunk = initChunk()
       cp = initCompiler()
     cp.compileScript(chunk, module, ast)
   dumpTokens(input)
   echo ast
+  echo module
   echo chunk.disassemble()
 
 suite "compiler":
@@ -89,5 +90,11 @@ suite "compiler":
       stop = false
     while x < 10 and not stop {
 
+    }
+    """)
+  test "objects":
+    compile("""
+    object Hello {
+      x, y: number
     }
     """)

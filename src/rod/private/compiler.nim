@@ -5,6 +5,7 @@
 #--
 
 import macros
+import strformat
 import tables
 
 import chunk
@@ -19,15 +20,14 @@ type
     breaks: seq[int]
   Scope = object
     locals: Table[string, Variable]
-    types: seq[RodType]
+    types: Table[string, RodType]
   Compiler* = object
     scopes: seq[Scope]
     loops: seq[Loop]
 
 proc error(node: Node, msg: string) =
   raise (ref RodError)(kind: reCompile, ln: node.ln, col: node.col,
-                       msg: node.file & " " & $node.ln & ':' & $node.col & ' ' &
-                            msg)
+                       msg: fmt"{node.file} {node.ln}:{node.col} {msg}")
 
 template compilerGuard(body) =
   chunk.ln = node.ln
@@ -81,7 +81,7 @@ proc getVar(compiler: Compiler, module: Module, node: Node): Variable =
   else:
     if module.globals.hasKey(node.ident):
       return module.globals[node.ident]
-  node.error("Attempt to reference undeclared variable '" & node.ident & '\'')
+  node.error(fmt"Attempt to reference undeclared variable '{node.ident}'")
 
 proc popVar(compiler: var Compiler, chunk: var Chunk, module: var Module,
             node: Node) =
@@ -98,7 +98,7 @@ proc popVar(compiler: var Compiler, chunk: var Chunk, module: var Module,
     if module.globals.hasKey(node.ident):
       variable = module.globals[node.ident]
   if not variable.isMutable and variable.isSet:
-    node.error("Attempt to assign to 'let' variable '" & node.ident & '\'')
+    node.error(fmt"Attempt to assign to 'let' variable '{node.ident}'")
   else:
     if variable.kind == vkLocal:
       if variable.isSet:
@@ -110,7 +110,7 @@ proc popVar(compiler: var Compiler, chunk: var Chunk, module: var Module,
       chunk.emit(chunk.getConst(node.ident.rod))
       module.globals[node.ident].isSet = true
     return
-  node.error("Attempt to assign to undeclared variable '" & node.ident & '\'')
+  node.error(fmt"Attempt to assign to undeclared variable '{node.ident}'")
 
 proc pushVar(compiler: Compiler, chunk: var Chunk, variable: Variable) =
   if variable.kind == vkLocal:
@@ -120,6 +120,28 @@ proc pushVar(compiler: Compiler, chunk: var Chunk, variable: Variable) =
     chunk.emit(opcPushG)
     chunk.emit(chunk.getConst(variable.name.rod))
 
+proc typeName(node: Node): string =
+  case node.kind
+  of nkIdent: result = node.ident
+  of nkIndex:
+    result = "["
+    for i, child in node.children:
+      result.add(child.typeName)
+      if i < node.children.len - 1:
+        result.add(", ")
+    result.add("]")
+  else: discard
+
+proc getTy(compiler: Compiler, module: Module, name: Node): RodType =
+  let oname = name.typeName
+  if compiler.scopes.len > 0:
+    for i in countdown(compiler.scopes.len - 1, 0):
+      if oname in compiler.scopes[i].types:
+        return compiler.scopes[i].types[oname]
+  if oname in module.types:
+    return module.ty(oname)
+  name.error(fmt"Attempt to reference non-existent type '{oname}'")
+
 proc compileExpr(node: Node): RodType {.compiler.}
 
 proc pushConst(node: Node): RodType {.compiler.} =
@@ -127,32 +149,31 @@ proc pushConst(node: Node): RodType {.compiler.} =
   of nkBool:
     if node.boolVal == true: chunk.emit(opcPushTrue)
     else: chunk.emit(opcPushFalse)
-    result = module.types["bool"]
+    result = module.ty("bool")
   of nkNumber:
     chunk.emit(opcPushN)
     chunk.emit(chunk.getConst(node.numberVal.rod))
-    result = module.types["number"]
+    result = module.ty("number")
   else: discard
 
 proc prefix(node: Node): RodType {.compiler.} =
   var
     typeMismatch = false
   let ty = compiler.compileExpr(chunk, module, node[1])
-  if ty == module.types["number"]:
+  if ty == module.ty("number"):
     case node[0].ident
     of "+": discard # + is a noop
     of "-": chunk.emit(opcNegN)
     else: typeMismatch = true
     if not typeMismatch: result = ty
-  elif ty == module.types["bool"]:
+  elif ty == module.ty("bool"):
     case node[0].ident
     of "not": chunk.emit(opcInvB)
     else: typeMismatch = true
     if not typeMismatch: result = ty
   else: typeMismatch = true
   if typeMismatch:
-    node.error("No overload of '" & node[0].ident & "' available for <" &
-                ty.name & ">")
+    node.error(fmt"No overload of '{node[0].ident}' available for <{ty.name}>")
 
 proc infix(node: Node): RodType {.compiler.} =
   if node[0].ident notin ["=", "or", "and"]:
@@ -160,7 +181,7 @@ proc infix(node: Node): RodType {.compiler.} =
     let
       aTy = compiler.compileExpr(chunk, module, node[1])
       bTy = compiler.compileExpr(chunk, module, node[2])
-    if aTy == module.types["number"] and bTy == module.types["number"]:
+    if aTy == bTy and aTy == module.ty("number"):
       case node[0].ident
       of "+": chunk.emit(opcAddN)
       of "-": chunk.emit(opcSubN)
@@ -175,10 +196,10 @@ proc infix(node: Node): RodType {.compiler.} =
       else: typeMismatch = true
       if not typeMismatch: result =
         case node[0].ident
-        of "+", "-", "*", "/": module.types["number"]
-        of "==", "!=", "<", "<=", ">", ">=": module.types["bool"]
-        else: module.types["void"]
-    elif aTy == module.types["bool"] and bTy == module.types["bool"]:
+        of "+", "-", "*", "/": module.ty("number")
+        of "==", "!=", "<", "<=", ">", ">=": module.ty("bool")
+        else: module.ty("void")
+    elif aTy == bTy and aTy == module.ty("bool"):
       case node[0].ident
       of "==": chunk.emit(opcEqB)
       of "!=": chunk.emit(opcEqB); chunk.emit(opcInvB)
@@ -186,8 +207,8 @@ proc infix(node: Node): RodType {.compiler.} =
       if not typeMismatch: result = aTy
     else: typeMismatch = true
     if typeMismatch:
-      node.error("No overload of '" & node[0].ident & "' available for <" &
-                 aTy.name & ", " & bTy.name & ">")
+      node.error(fmt"No overload of '{node[0].ident}' available for" &
+                 fmt"<{aTy.name}, {bTy.name}>")
   else:
     case node[0].ident
     of "=":
@@ -198,31 +219,31 @@ proc infix(node: Node): RodType {.compiler.} =
         if valTy == variable.ty:
           compiler.popVar(chunk, module, node[1])
         else:
-          node.error("Type mismatch: cannot assign value of type <" &
-                     valTy.name & "> to a variable of type <" &
-                     variable.ty.name & ">")
-        result = module.types["void"]
-      else: node.error("Cannot assign to '" & ($node.kind)[2..^1] & "'")
+          node.error(fmt"Type mismatch: cannot assign value of type " &
+                     fmt"<{valTy.name}> to a variable of type " &
+                     fmt"<{variable.ty.name}>")
+        result = module.ty("void")
+      else: node.error(fmt"Cannot assign to '{($node.kind)[2..^1]}'")
     of "or":
       let aTy = compiler.compileExpr(chunk, module, node[1])
       chunk.emit(opcJumpFwdT)
       let hole = chunk.emitHole(2)
       chunk.emit(opcDiscard)
       let bTy = compiler.compileExpr(chunk, module, node[2])
-      if aTy != module.types["bool"] or bTy != module.types["bool"]:
+      if aTy != module.ty("bool") or bTy != module.ty("bool"):
         node.error("Operands of 'or' must be booleans")
       chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
-      result = module.types["bool"]
+      result = module.ty("bool")
     of "and":
       let aTy = compiler.compileExpr(chunk, module, node[1])
       chunk.emit(opcJumpFwdF)
       let hole = chunk.emitHole(2)
       chunk.emit(opcDiscard)
       let bTy = compiler.compileExpr(chunk, module, node[2])
-      if aTy != module.types["bool"] or bTy != module.types["bool"]:
+      if aTy != module.ty("bool") or bTy != module.ty("bool"):
         node.error("Operands of 'and' must be booleans")
       chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
-      result = module.types["bool"]
+      result = module.ty("bool")
     else: discard
 
 proc compileBlock(node: Node, isStmt: bool): RodType {.compiler.}
@@ -235,7 +256,7 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
     hadElse = false
   while pos < node.children.len:
     if node[pos].kind != nkBlock:
-      if compiler.compileExpr(chunk, module, node[pos]) != module.types["bool"]:
+      if compiler.compileExpr(chunk, module, node[pos]) != module.ty("bool"):
         node[pos].error("'if' condition must be a boolean")
       inc(pos)
       chunk.emit(opcJumpFwdF)
@@ -247,8 +268,8 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
           ifTy = blockTy
         else:
           if blockTy != ifTy:
-            node[pos].error("Type mismatch: <" & ifTy.name & "> expected, " &
-                            "but got <" & blockTy.name & ">")
+            node[pos].error(fmt"Type mismatch: <{ifTy.name}> expected, but " &
+                            fmt"got <{blockTy.name}>")
       if pos < node.children.len - 1:
         chunk.emit(opcJumpFwd)
         jumpsToEnd.add(chunk.emitHole(2))
@@ -259,8 +280,8 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
       let blockTy = compiler.compileBlock(chunk, module, node[pos], isStmt)
       if not isStmt:
         if blockTy != ifTy:
-          node[pos].error("Type mismatch: <" & ifTy.name & "> expected, but " &
-                          "got <" & blockTy.name & ">")
+          node[pos].error(fmt"Type mismatch: <{ifTy.name}> expected, but got " &
+                          fmt"<{blockTy.name}>")
       hadElse = true
       inc(pos)
   if not hadElse:
@@ -268,8 +289,8 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
   for hole in jumpsToEnd:
     chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
   result =
-    if isStmt: module.types["void"]
-    else: module.types["void"]
+    if isStmt: module.ty("void")
+    else: module.ty("void")
 
 proc compileExpr(node: Node): RodType {.compiler.} =
   case node.kind
@@ -297,7 +318,7 @@ proc compileWhile(node: Node) {.compiler.} =
     if node[0].boolVal == true: isWhileTrue = true
     else: return # while false is a noop
   if not isWhileTrue:
-    if compiler.compileExpr(chunk, module, node[0]) != module.types["bool"]:
+    if compiler.compileExpr(chunk, module, node[0]) != module.ty("bool"):
       node[0].error("'while' condition must be a boolean")
     chunk.emit(opcJumpFwdF)
     afterLoop = chunk.emitHole(2)
@@ -320,7 +341,7 @@ proc compileBreak(node: Node) {.compiler.} =
   compiler.loops[^1].breaks.add(chunk.emitHole(2))
 
 proc compileContinue(node: Node) {.compiler.} =
-  if compiler.loops.len == 0:
+  if compiler.loops.len < 1:
     node.error("'continue' can only be used in a loop")
   chunk.emit(opcNDiscard)
   chunk.emit(compiler.scopes[^1].locals.len.uint8)
@@ -328,14 +349,29 @@ proc compileContinue(node: Node) {.compiler.} =
   chunk.emit(uint16(chunk.code.len - compiler.loops[^1].before))
 
 proc compileObject(node: Node) {.compiler.} =
-  discard
+  var ty = RodType(kind: tkObject, name: node[0].typeName)
+  for fields in node.children[1..^1]:
+    let fieldsTy = compiler.getTy(module, fields.children[^1])
+    var fieldNames: seq[string]
+    for name in fields.children[0..^2]:
+      fieldNames.add(name.ident)
+    for name in fieldNames:
+      ty.objFields.add(name, (ty.objFields.len, name, fieldsTy))
+  if compiler.scopes.len > 0:
+    compiler.scopes[^1].types.add(ty.name, ty)
+  else:
+    module.types.add(ty.name, ty)
 
 proc compileStmt(node: Node) {.compiler.} =
   case node.kind
   of nkLet, nkVar:
     for decl in node.children:
-      compiler.declareVar(module, decl[1].ident, node.kind == nkVar,
-                          compiler.compileExpr(chunk, module, decl[2]))
+      let valTy = compiler.compileExpr(chunk, module, decl[2])
+      if decl[3].kind != nkEmpty:
+        let expectedTy = compiler.getTy(module, decl[3])
+        if valTy != expectedTy:
+          decl[2].error("Value does not match the specified type")
+      compiler.declareVar(module, decl[1].ident, node.kind == nkVar, valTy)
       compiler.popVar(chunk, module, decl[1])
   of nkBlock: discard compiler.compileBlock(chunk, module, node, true)
   of nkIf: discard compiler.compileIf(chunk, module, node, true)
@@ -345,7 +381,7 @@ proc compileStmt(node: Node) {.compiler.} =
   of nkObject: compiler.compileObject(chunk, module, node)
   else:
     let ty = compiler.compileExpr(chunk, module, node)
-    if ty != module.types["void"]:
+    if ty != module.ty("void"):
       chunk.emit(opcDiscard)
 
 proc compileBlock(node: Node, isStmt: bool): RodType {.compiler.} =
@@ -359,7 +395,7 @@ proc compileBlock(node: Node, isStmt: bool): RodType {.compiler.} =
       else:
         result = compiler.compileExpr(chunk, module, s)
   compiler.popScope(chunk)
-  if isStmt: result = module.types["void"]
+  if isStmt: result = module.ty("void")
 
 proc compileScript*(node: Node) {.compiler.} =
   for s in node.children:
