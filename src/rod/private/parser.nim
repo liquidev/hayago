@@ -18,6 +18,7 @@ type
     nkVar, nkLet
     nkIf, nkWhile, nkFor
     nkBreak, nkContinue
+    nkCall
     nkGeneric
     nkObject, nkObjFields, nkObjConstr
   Node* = ref object
@@ -85,7 +86,7 @@ proc precedence(token: Token): int =
   result =
     case token.kind
     of tokOperator: token.prec
-    of tokLBrk, tokDot: 10
+    of tokLBrk, tokDot, tokLPar: 10
     else: 0
 
 proc parseExpr(prec = 0): Node {.rule.}
@@ -158,6 +159,29 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
   of tokDot: # Dot operator '.'
     result = Node(kind: nkDot,
                   children: @[left, parseExpr(scan, 10)])
+  of tokLPar: # Call or object constructord
+    if scan.pattern([tokIdent, tokColon]):
+      # Object constructor
+      var fields: seq[Node]
+      while true:
+        if scan.atEnd:
+          scan.error("Missing right paren ')'")
+        let field = scan.expect(tokIdent, "Field name expected")
+        scan.expect(tokColon, "Colon ':' expected")
+        let value = parseExpr(scan)
+        fields.add(Node(kind: nkObjFields, children:
+                          @[Node(kind: nkIdent, ident: field.ident),
+                            value]))
+        let next = scan.next().kind
+        case next
+        of tokComma: continue
+        of tokRPar: break
+        else:
+          scan.error("Comma ',' or right paren ')' expected")
+      result = Node(kind: nkObjConstr, children: fields)
+    else:
+      # Call (TODO)
+      discard
   else: scan.error("Unexpected token: " & $token.kind)
 
 proc parseExpr(prec = 0): Node {.rule.} =

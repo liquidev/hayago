@@ -48,6 +48,9 @@ suite "parser":
         b: U
       }
     """)
+    parse("""
+      var myVec = Vec2(x: 10, y: 20)
+    """)
   test "indexing":
     parse("""
       var x = a[2]

@@ -239,6 +239,19 @@ proc expectOp*(scan: var Scanner, op: string) =
   if tok.kind != tokOperator or tok.operator != op:
     scan.error('\'' & op & "' expected, got " & $tok.kind)
 
+proc pattern*(scan: var Scanner, patt: openarray[TokenKind]): bool =
+  let
+    pos = scan.pos
+    ln = scan.ln
+    col = scan.col
+  for tk in patt:
+    if scan.next().kind != tk:
+      return false
+  scan.pos = pos
+  scan.ln = ln
+  scan.col = col
+  result = true
+
 proc initScanner*(input: string, file = "input"): Scanner =
   result = Scanner(file: file, input: input,
                    ln: 1, col: 0)
