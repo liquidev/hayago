@@ -32,9 +32,7 @@ object Greeter {
 }
 
 proc newGreeter(target: string) -> Greeter {
-  result = Greeter {
-    target: target
-  }
+  result = Greeter(target: target}
 }
 
 proc greet(greeter: Greeter) {

@@ -296,7 +296,7 @@ object MyObject {
 ```
 Objects are constructed using the following syntax:
 ```rod
-var myObj = MyObject { a: "test", b: 3.1415926, x: true, y: false }
+var myObj = MyObject(a: "test", b: 3.1415926, x: true, y: false)
 ```
 All fields of an object must be initialized to a value, although this is subject
 to change.
