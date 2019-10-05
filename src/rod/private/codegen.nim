@@ -21,7 +21,7 @@ type
   Scope = object
     locals: Table[string, Variable]
     types: Table[string, RodType]
-  Compiler* = object
+  CodeGen* = object
     scopes: seq[Scope]
     loops: seq[Loop]
 
@@ -29,20 +29,20 @@ proc error(node: Node, msg: string) =
   raise (ref RodError)(kind: reCompile, ln: node.ln, col: node.col,
                        msg: fmt"{node.file} {node.ln}:{node.col} {msg}")
 
-template compilerGuard(body) =
+template genGuard(body) =
   chunk.ln = node.ln
   chunk.col = node.col
   body
 
-macro compiler(pc) =
+macro codegen(pc) =
   pc[3].insert(1,
     newIdentDefs(ident"module", newNimNode(nnkVarTy).add(ident"Module")))
   pc[3].insert(1,
     newIdentDefs(ident"chunk", newNimNode(nnkVarTy).add(ident"Chunk")))
   pc[3].insert(1,
-    newIdentDefs(ident"compiler", newNimNode(nnkVarTy).add(ident"Compiler")))
+    newIdentDefs(ident"gen", newNimNode(nnkVarTy).add(ident"CodeGen")))
   if pc[6].kind != nnkEmpty:
-    pc[6] = newCall("compilerGuard", pc[6])
+    pc[6] = newCall("genGuard", pc[6])
   result = pc
 
 proc getConst(chunk: var Chunk, val: RodValue): uint16 =
@@ -51,47 +51,47 @@ proc getConst(chunk: var Chunk, val: RodValue): uint16 =
   result = chunk.consts[val.kind].len.uint16
   chunk.consts[val.kind].add(val)
 
-proc pushScope(compiler: var Compiler) =
-  compiler.scopes.add(Scope())
+proc pushScope(gen: var CodeGen) =
+  gen.scopes.add(Scope())
 
-proc popScope(compiler: var Compiler, chunk: var Chunk) =
-  let v = compiler.scopes[^1].locals.len
+proc popScope(gen: var CodeGen, chunk: var Chunk) =
+  let v = gen.scopes[^1].locals.len
   if v > 0:
     chunk.emit(opcNDiscard)
     chunk.emit(v.uint8)
-  discard compiler.scopes.pop()
+  discard gen.scopes.pop()
 
-proc declareVar(compiler: var Compiler, module: var Module,
+proc declareVar(gen: var CodeGen, module: var Module,
                 name: string, mut: bool, ty: RodType) =
-  if compiler.scopes.len > 0:
-    compiler.scopes[^1].locals.add(name, Variable(
+  if gen.scopes.len > 0:
+    gen.scopes[^1].locals.add(name, Variable(
       name: name, isMutable: mut, ty: ty,
       kind: vkLocal,
-      stackPos: compiler.scopes[^1].locals.len,
-      scope: compiler.scopes.len))
+      stackPos: gen.scopes[^1].locals.len,
+      scope: gen.scopes.len))
   else:
     module.globals.add(name, Variable(name: name, isMutable: mut, ty: ty,
                                       kind: vkGlobal))
 
-proc getVar(compiler: Compiler, module: Module, node: Node): Variable =
-  if compiler.scopes.len > 0:
-    for i in countdown(compiler.scopes.len - 1, 0):
-      if node.ident in compiler.scopes[i].locals:
-        return compiler.scopes[i].locals[node.ident]
+proc getVar(gen: CodeGen, module: Module, node: Node): Variable =
+  if gen.scopes.len > 0:
+    for i in countdown(gen.scopes.len - 1, 0):
+      if node.ident in gen.scopes[i].locals:
+        return gen.scopes[i].locals[node.ident]
   else:
     if module.globals.hasKey(node.ident):
       return module.globals[node.ident]
   node.error(fmt"Attempt to reference undeclared variable '{node.ident}'")
 
-proc popVar(compiler: var Compiler, chunk: var Chunk, module: var Module,
+proc popVar(gen: var CodeGen, chunk: var Chunk, module: var Module,
             node: Node) =
   var
     variable: Variable
     scopeIndex: int
-  if compiler.scopes.len > 0:
-    for i in countdown(compiler.scopes.len - 1, 0):
-      if node.ident in compiler.scopes[i].locals:
-        variable = compiler.scopes[i].locals[node.ident]
+  if gen.scopes.len > 0:
+    for i in countdown(gen.scopes.len - 1, 0):
+      if node.ident in gen.scopes[i].locals:
+        variable = gen.scopes[i].locals[node.ident]
         scopeIndex = i
         break
   else:
@@ -104,7 +104,7 @@ proc popVar(compiler: var Compiler, chunk: var Chunk, module: var Module,
       if variable.isSet:
         chunk.emit(opcPopL)
         chunk.emit(variable.stackPos.uint8)
-      compiler.scopes[scopeIndex].locals[node.ident].isSet = true
+      gen.scopes[scopeIndex].locals[node.ident].isSet = true
     else:
       chunk.emit(opcPopG)
       chunk.emit(chunk.getConst(node.ident.rod))
@@ -112,7 +112,7 @@ proc popVar(compiler: var Compiler, chunk: var Chunk, module: var Module,
     return
   node.error(fmt"Attempt to assign to undeclared variable '{node.ident}'")
 
-proc pushVar(compiler: Compiler, chunk: var Chunk, variable: Variable) =
+proc pushVar(gen: CodeGen, chunk: var Chunk, variable: Variable) =
   if variable.kind == vkLocal:
     chunk.emit(opcPushL)
     chunk.emit(variable.stackPos.uint8)
@@ -132,19 +132,19 @@ proc typeName(node: Node): string =
     result.add("]")
   else: discard
 
-proc getTy(compiler: Compiler, module: Module, name: Node): RodType =
+proc getTy(gen: CodeGen, module: Module, name: Node): RodType =
   let oname = name.typeName
-  if compiler.scopes.len > 0:
-    for i in countdown(compiler.scopes.len - 1, 0):
-      if oname in compiler.scopes[i].types:
-        return compiler.scopes[i].types[oname]
+  if gen.scopes.len > 0:
+    for i in countdown(gen.scopes.len - 1, 0):
+      if oname in gen.scopes[i].types:
+        return gen.scopes[i].types[oname]
   if oname in module.types:
     return module.ty(oname)
   name.error(fmt"Attempt to reference non-existent type '{oname}'")
 
-proc compileExpr(node: Node): RodType {.compiler.}
+proc genExpr(node: Node): RodType {.codegen.}
 
-proc pushConst(node: Node): RodType {.compiler.} =
+proc pushConst(node: Node): RodType {.codegen.} =
   case node.kind
   of nkBool:
     if node.boolVal == true: chunk.emit(opcPushTrue)
@@ -156,10 +156,10 @@ proc pushConst(node: Node): RodType {.compiler.} =
     result = module.ty("number")
   else: discard
 
-proc prefix(node: Node): RodType {.compiler.} =
+proc prefix(node: Node): RodType {.codegen.} =
   var
     typeMismatch = false
-  let ty = compiler.compileExpr(chunk, module, node[1])
+  let ty = gen.genExpr(chunk, module, node[1])
   if ty == module.ty("number"):
     case node[0].ident
     of "+": discard # + is a noop
@@ -175,12 +175,12 @@ proc prefix(node: Node): RodType {.compiler.} =
   if typeMismatch:
     node.error(fmt"No overload of '{node[0].ident}' available for <{ty.name}>")
 
-proc infix(node: Node): RodType {.compiler.} =
+proc infix(node: Node): RodType {.codegen.} =
   if node[0].ident notin ["=", "or", "and"]:
     var typeMismatch = false
     let
-      aTy = compiler.compileExpr(chunk, module, node[1])
-      bTy = compiler.compileExpr(chunk, module, node[2])
+      aTy = gen.genExpr(chunk, module, node[1])
+      bTy = gen.genExpr(chunk, module, node[2])
     if aTy == bTy and aTy == module.ty("number"):
       case node[0].ident
       of "+": chunk.emit(opcAddN)
@@ -214,10 +214,10 @@ proc infix(node: Node): RodType {.compiler.} =
     of "=":
       case node[1].kind
       of nkIdent:
-        var variable = compiler.getVar(module, node[1])
-        let valTy = compiler.compileExpr(chunk, module, node[2])
+        var variable = gen.getVar(module, node[1])
+        let valTy = gen.genExpr(chunk, module, node[2])
         if valTy == variable.ty:
-          compiler.popVar(chunk, module, node[1])
+          gen.popVar(chunk, module, node[1])
         else:
           node.error(fmt"Type mismatch: cannot assign value of type " &
                      fmt"<{valTy.name}> to a variable of type " &
@@ -225,30 +225,30 @@ proc infix(node: Node): RodType {.compiler.} =
         result = module.ty("void")
       else: node.error(fmt"Cannot assign to '{($node.kind)[2..^1]}'")
     of "or":
-      let aTy = compiler.compileExpr(chunk, module, node[1])
+      let aTy = gen.genExpr(chunk, module, node[1])
       chunk.emit(opcJumpFwdT)
       let hole = chunk.emitHole(2)
       chunk.emit(opcDiscard)
-      let bTy = compiler.compileExpr(chunk, module, node[2])
+      let bTy = gen.genExpr(chunk, module, node[2])
       if aTy != module.ty("bool") or bTy != module.ty("bool"):
         node.error("Operands of 'or' must be booleans")
       chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
       result = module.ty("bool")
     of "and":
-      let aTy = compiler.compileExpr(chunk, module, node[1])
+      let aTy = gen.genExpr(chunk, module, node[1])
       chunk.emit(opcJumpFwdF)
       let hole = chunk.emitHole(2)
       chunk.emit(opcDiscard)
-      let bTy = compiler.compileExpr(chunk, module, node[2])
+      let bTy = gen.genExpr(chunk, module, node[2])
       if aTy != module.ty("bool") or bTy != module.ty("bool"):
         node.error("Operands of 'and' must be booleans")
       chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
       result = module.ty("bool")
     else: discard
 
-proc compileBlock(node: Node, isStmt: bool): RodType {.compiler.}
+proc genBlock(node: Node, isStmt: bool): RodType {.codegen.}
 
-proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
+proc genIf(node: Node, isStmt: bool): RodType {.codegen.} =
   var
     pos = 0
     jumpsToEnd: seq[int]
@@ -256,13 +256,13 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
     hadElse = false
   while pos < node.children.len:
     if node[pos].kind != nkBlock:
-      if compiler.compileExpr(chunk, module, node[pos]) != module.ty("bool"):
+      if gen.genExpr(chunk, module, node[pos]) != module.ty("bool"):
         node[pos].error("'if' condition must be a boolean")
       inc(pos)
       chunk.emit(opcJumpFwdF)
       let afterBlock = chunk.emitHole(2)
       chunk.emit(opcDiscard)
-      let blockTy = compiler.compileBlock(chunk, module, node[pos], isStmt)
+      let blockTy = gen.genBlock(chunk, module, node[pos], isStmt)
       if not isStmt:
         if ifTy == nil:
           ifTy = blockTy
@@ -277,7 +277,7 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
       chunk.fillHole(afterBlock, uint16(chunk.code.len - afterBlock + 1))
     else:
       chunk.emit(opcDiscard)
-      let blockTy = compiler.compileBlock(chunk, module, node[pos], isStmt)
+      let blockTy = gen.genBlock(chunk, module, node[pos], isStmt)
       if not isStmt:
         if blockTy != ifTy:
           node[pos].error(fmt"Type mismatch: <{ifTy.name}> expected, but got " &
@@ -292,115 +292,115 @@ proc compileIf(node: Node, isStmt: bool): RodType {.compiler.} =
     if isStmt: module.ty("void")
     else: module.ty("void")
 
-proc compileExpr(node: Node): RodType {.compiler.} =
+proc genExpr(node: Node): RodType {.codegen.} =
   case node.kind
   of nkBool, nkNumber:
-    result = compiler.pushConst(chunk, module, node)
+    result = gen.pushConst(chunk, module, node)
   of nkIdent:
-    var variable = compiler.getVar(module, node)
-    compiler.pushVar(chunk, variable)
+    var variable = gen.getVar(module, node)
+    gen.pushVar(chunk, variable)
     result = variable.ty
   of nkPrefix:
-    result = compiler.prefix(chunk, module, node)
+    result = gen.prefix(chunk, module, node)
   of nkInfix:
-    result = compiler.infix(chunk, module, node)
+    result = gen.infix(chunk, module, node)
   of nkIf:
-    result = compiler.compileIf(chunk, module, node, false)
+    result = gen.genIf(chunk, module, node, false)
   else: node.error("Value does not have a valid type")
 
-proc compileWhile(node: Node) {.compiler.} =
+proc genWhile(node: Node) {.codegen.} =
   var
     isWhileTrue = false
     afterLoop: int
   let beforeLoop = chunk.code.len
-  compiler.loops.add(Loop(before: beforeLoop))
+  gen.loops.add(Loop(before: beforeLoop))
   if node[0].kind == nkBool:
     if node[0].boolVal == true: isWhileTrue = true
     else: return # while false is a noop
   if not isWhileTrue:
-    if compiler.compileExpr(chunk, module, node[0]) != module.ty("bool"):
+    if gen.genExpr(chunk, module, node[0]) != module.ty("bool"):
       node[0].error("'while' condition must be a boolean")
     chunk.emit(opcJumpFwdF)
     afterLoop = chunk.emitHole(2)
     chunk.emit(opcDiscard)
-  discard compiler.compileBlock(chunk, module, node[1], true)
+  discard gen.genBlock(chunk, module, node[1], true)
   chunk.emit(opcJumpBack)
   chunk.emit(uint16(chunk.code.len - beforeLoop - 1))
   if not isWhileTrue:
     chunk.fillHole(afterLoop, uint16(chunk.code.len - afterLoop + 1))
-  for brk in compiler.loops[^1].breaks:
+  for brk in gen.loops[^1].breaks:
     chunk.fillHole(brk, uint16(chunk.code.len - brk + 1))
-  discard compiler.loops.pop()
+  discard gen.loops.pop()
 
-proc compileBreak(node: Node) {.compiler.} =
-  if compiler.loops.len == 0:
+proc genBreak(node: Node) {.codegen.} =
+  if gen.loops.len == 0:
     node.error("'break' can only be used in a loop")
   chunk.emit(opcNDiscard)
-  chunk.emit(compiler.scopes[^1].locals.len.uint8)
+  chunk.emit(gen.scopes[^1].locals.len.uint8)
   chunk.emit(opcJumpFwd)
-  compiler.loops[^1].breaks.add(chunk.emitHole(2))
+  gen.loops[^1].breaks.add(chunk.emitHole(2))
 
-proc compileContinue(node: Node) {.compiler.} =
-  if compiler.loops.len < 1:
+proc genContinue(node: Node) {.codegen.} =
+  if gen.loops.len < 1:
     node.error("'continue' can only be used in a loop")
   chunk.emit(opcNDiscard)
-  chunk.emit(compiler.scopes[^1].locals.len.uint8)
+  chunk.emit(gen.scopes[^1].locals.len.uint8)
   chunk.emit(opcJumpBack)
-  chunk.emit(uint16(chunk.code.len - compiler.loops[^1].before))
+  chunk.emit(uint16(chunk.code.len - gen.loops[^1].before))
 
-proc compileObject(node: Node) {.compiler.} =
+proc genObject(node: Node) {.codegen.} =
   var ty = RodType(kind: tkObject, name: node[0].typeName)
   for fields in node.children[1..^1]:
-    let fieldsTy = compiler.getTy(module, fields.children[^1])
+    let fieldsTy = gen.getTy(module, fields.children[^1])
     var fieldNames: seq[string]
     for name in fields.children[0..^2]:
       fieldNames.add(name.ident)
     for name in fieldNames:
       ty.objFields.add(name, (ty.objFields.len, name, fieldsTy))
-  if compiler.scopes.len > 0:
-    compiler.scopes[^1].types.add(ty.name, ty)
+  if gen.scopes.len > 0:
+    gen.scopes[^1].types.add(ty.name, ty)
   else:
     module.types.add(ty.name, ty)
 
-proc compileStmt(node: Node) {.compiler.} =
+proc genStmt(node: Node) {.codegen.} =
   case node.kind
   of nkLet, nkVar:
     for decl in node.children:
-      let valTy = compiler.compileExpr(chunk, module, decl[2])
+      let valTy = gen.genExpr(chunk, module, decl[2])
       if decl[3].kind != nkEmpty:
-        let expectedTy = compiler.getTy(module, decl[3])
+        let expectedTy = gen.getTy(module, decl[3])
         if valTy != expectedTy:
           decl[2].error("Value does not match the specified type")
-      compiler.declareVar(module, decl[1].ident, node.kind == nkVar, valTy)
-      compiler.popVar(chunk, module, decl[1])
-  of nkBlock: discard compiler.compileBlock(chunk, module, node, true)
-  of nkIf: discard compiler.compileIf(chunk, module, node, true)
-  of nkWhile: compiler.compileWhile(chunk, module, node)
-  of nkBreak: compiler.compileBreak(chunk, module, node)
-  of nkContinue: compiler.compileContinue(chunk, module, node)
-  of nkObject: compiler.compileObject(chunk, module, node)
+      gen.declareVar(module, decl[1].ident, node.kind == nkVar, valTy)
+      gen.popVar(chunk, module, decl[1])
+  of nkBlock: discard gen.genBlock(chunk, module, node, true)
+  of nkIf: discard gen.genIf(chunk, module, node, true)
+  of nkWhile: gen.genWhile(chunk, module, node)
+  of nkBreak: gen.genBreak(chunk, module, node)
+  of nkContinue: gen.genContinue(chunk, module, node)
+  of nkObject: gen.genObject(chunk, module, node)
   else:
-    let ty = compiler.compileExpr(chunk, module, node)
+    let ty = gen.genExpr(chunk, module, node)
     if ty != module.ty("void"):
       chunk.emit(opcDiscard)
 
-proc compileBlock(node: Node, isStmt: bool): RodType {.compiler.} =
-  compiler.pushScope()
+proc genBlock(node: Node, isStmt: bool): RodType {.codegen.} =
+  gen.pushScope()
   for i, s in node.children:
     if isStmt:
-      compiler.compileStmt(chunk, module, s)
+      gen.genStmt(chunk, module, s)
     else:
       if i < node.children.len - 1:
-        compiler.compileStmt(chunk, module, s)
+        gen.genStmt(chunk, module, s)
       else:
-        result = compiler.compileExpr(chunk, module, s)
-  compiler.popScope(chunk)
+        result = gen.genExpr(chunk, module, s)
+  gen.popScope(chunk)
   if isStmt: result = module.ty("void")
 
-proc compileScript*(node: Node) {.compiler.} =
+proc genScript*(node: Node) {.codegen.} =
   for s in node.children:
-    compiler.compileStmt(chunk, module, s)
+    gen.genStmt(chunk, module, s)
   chunk.emit(opcHalt)
 
-proc initCompiler*(): Compiler =
-  result = Compiler()
+proc initCompiler*(): CodeGen =
+  result = CodeGen()
