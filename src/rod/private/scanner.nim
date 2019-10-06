@@ -220,7 +220,8 @@ proc next*(scan: var Scanner): Token =
     while scan.current != '`':
       if scan.current == '\x00':
         scan.error("Unterminated stropped identifier")
-      ident.add(scan.current)
+      if scan.current != ' ':
+        ident.add(scan.current)
       scan.advance()
     scan.advance()
     result = Token(kind: tokIdent, ident: ident)
