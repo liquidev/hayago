@@ -60,4 +60,5 @@ suite "parser":
     parse("""
       var x = a.x
       var y = a.x[3]
+      a.x = 10
     """)
