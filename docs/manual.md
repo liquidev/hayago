@@ -47,11 +47,19 @@ characters from the set `{'a'..'z', 'A'..'Z', '0'..'9', '_', '\x7f'..'\xff'}`.
 Arbitrary sequences of characters (including reserved keywords) may be used as
 identifiers provided that they're *stropped*. Stropping a sequence of characters
 is done using backticks '\`'. Example:
-
-    var `if` = 0
-
-This is rarely required though and should only be used in very specific cases
-described later in the manual.
+```rod
+var `if` = 0
+```
+Keep in mind that whitespace is ignored inside a stropped identifier, so this:
+```rod
+var `hello world` = 1
+```
+is the same as this:
+```rod
+var helloworld = 1
+```
+Stropping is rarely required though and should only be used in very specific
+cases described later in the manual.
 
 ### Expressions
 
