@@ -38,6 +38,21 @@ As of now, only basic literals (as shown above) are supported. So no scientific,
 binary, hexadecimal, or octal numbers, and no escape sequences in strings.
 This is subject to change, though.
 
+### Identifiers
+
+An identifier starts with a character from the set
+`{'a'..'z', 'A'..'Z', '_', '\x7f'..'\xff'}` and continues with 0 or more
+characters from the set `{'a'..'z', 'A'..'Z', '0'..'9', '_', '\x7f'..'\xff'}`.
+
+Arbitrary sequences of characters (including reserved keywords) may be used as
+identifiers provided that they're *stropped*. Stropping a sequence of characters
+is done using backticks '\`'. Example:
+
+    var `if` = 0
+
+This is rarely required though and should only be used in very specific cases
+described later in the manual.
+
 ### Expressions
 
 rod divides its syntax into expressions and statements. Expressions always have
@@ -315,7 +330,7 @@ Note that even if you create a `let` variable with an object value, you can
 still write to that object's fields, because the object itself is mutable. Only
 the variable cannot be reassigned.
 ```rod
-let myObj = MyObject { a: "test", b: 3.1415926, x: true, y: false }
+let myObj = MyObject(a: "test", b: 3.1415926, x: true, y: false)
 myObj.x = false // this is legit
 ```
 
@@ -422,9 +437,10 @@ It is always the default value for that type (eg. `0` for numbers).
 
 There's also another way of calling procs: that way is through assignment.
 Only 'setters' can be called this way. A setter is declared by adding `=` to the
-proc's name.
+proc's name. Because `=` is not a valid identifier character, the name must be
+stropped:
 ```rod
-proc someProperty=(a: number, b: number) {
+proc `someProperty=`(a: number, b: number) {
   // do things
 }
 ```
@@ -434,7 +450,8 @@ syntax:
 a.someProperty = b
 ```
 In a nutshell, they look exactly like an object field assignment. However, a
-proc is called instead.
+proc is called instead, and property setters can be declared for non-object
+types like `number`s.
 
 Object field assigmnents take precedence over setters:
 ```rod
@@ -442,10 +459,10 @@ object Vec2 {
   x, y: number
 }
 
-var myVec = Vec2 { x: 1, y: 2 }
+var myVec = Vec2(x: 1, y: 2)
 myVec.x = 3 // sets the field directly
 
-proc x=(vec: Vec2, val: number) {
+proc `x=`(vec: Vec2, val: number) {
   vec.x = val
 }
 
@@ -458,10 +475,10 @@ object Vec2 {
   fX, fY: number
 }
 
-var myVec = Vec2 { x: 1, y: 2 }
+var myVec = Vec2(x: 1, y: 2)
 myVec.fX = 3 // sets the field directly
 
-proc x=(vec: Vec2, val: number) {
+proc `x=`(vec: Vec2, val: number) {
   vec.fX = val
 }
 
@@ -479,17 +496,17 @@ object Vec2 {
   x, y: number
 }
 
-proc +(a, b: Vec2) -> Vec2 {
-  result = Vec2 { x: a.x + b.x, y: a.y + b.y }
+proc `+`(a, b: Vec2) -> Vec2 {
+  result = Vec2(x: a.x + b.x, y: a.y + b.y)
 }
 
 var
-  a = Vec2 { x: 3, y: 2 },
-  b = Vec2 { x: 2, y: 3 },
-  c = a + b // Vec2 { x: 5, y: 5 }
+  a = Vec2(x: 3, y: 2),
+  b = Vec2(x: 2, y: 3),
+  c = a + b // Vec2(x: 5, y: 5)
 ```
 As shown above, this feature is most useful with mathematical types, like
 vectors.
 
 Overloaded unary operators accept one parameter, and binary operators accept
-two parameters. `not` and `$` are unary-only.
+two parameters. `not` and `$` are unary-only operators.
