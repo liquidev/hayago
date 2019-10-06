@@ -98,5 +98,9 @@ suite "compiler":
       x, y: number
     }
 
-    var instance = Hello(x: 10, y: 20)
+    var
+      instance = Hello(x: 10, y: 20),
+      x = instance.x
+    instance.y = 30
+
     """)

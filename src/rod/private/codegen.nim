@@ -214,8 +214,9 @@ proc infix(node: Node): RodType {.codegen.} =
     of "=":
       case node[1].kind
       of nkIdent:
-        var variable = gen.getVar(module, node[1])
-        let valTy = gen.genExpr(chunk, module, node[2])
+        let
+          variable = gen.getVar(module, node[1])
+          valTy = gen.genExpr(chunk, module, node[2])
         if valTy == variable.ty:
           gen.popVar(chunk, module, node[1])
         else:
@@ -223,7 +224,24 @@ proc infix(node: Node): RodType {.codegen.} =
                      fmt"<{valTy.name}> to a variable of type " &
                      fmt"<{variable.ty.name}>")
         result = module.ty("void")
+      of nkDot:
+        if node[1][1].kind != nkIdent:
+          node[1][1].error(fmt"{node[1][1]} is not a valid object field")
+        let
+          ty = gen.genExpr(chunk, module, node[1][0])
+          fieldName = node[1][1].ident
+          valTy = gen.genExpr(chunk, module, node[2])
+        if ty.kind == tkObject and fieldName in ty.objFields:
+          let field = ty.objFields[fieldName]
+          if valTy != field.ty:
+            node[2].error(fmt"Type mismatch: field has type <{field.ty.name}>" &
+                          fmt" but got <{valTy.name}>")
+          chunk.emit(opcPopF)
+          chunk.emit(field.id.uint8)
+        else:
+          node[1].error(fmt"Field '{fieldName}' doesn't exist")
       else: node.error(fmt"Cannot assign to '{($node.kind)[2..^1]}'")
+      result = module.ty("void")
     of "or":
       let aTy = gen.genExpr(chunk, module, node[1])
       chunk.emit(opcJumpFwdT)
@@ -268,6 +286,16 @@ proc objConstr(node: Node): RodType {.codegen.} =
                  fmt"<{ty.name}>")
   chunk.emit(opcConstrObj)
   chunk.emit(uint8(fields.len))
+
+proc genGetField(node: Node): RodType {.codegen.} =
+  let
+    ty = gen.genExpr(chunk, module, node[0])
+    fieldName = node[1].ident
+  if ty.kind == tkObject and fieldName in ty.objFields:
+    let field = ty.objFields[fieldName]
+    result = field.ty
+    chunk.emit(opcPushF)
+    chunk.emit(field.id.uint8)
 
 proc genBlock(node: Node, isStmt: bool): RodType {.codegen.}
 
@@ -327,6 +355,8 @@ proc genExpr(node: Node): RodType {.codegen.} =
     result = gen.prefix(chunk, module, node)
   of nkInfix:
     result = gen.infix(chunk, module, node)
+  of nkDot:
+    result = gen.genGetField(chunk, module, node)
   of nkObjConstr:
     result = gen.objConstr(chunk, module, node)
   of nkIf:
