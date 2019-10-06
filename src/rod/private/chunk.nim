@@ -144,7 +144,7 @@ proc `$`*(module: Module): string =
     of tkObject:
       result.add("object")
       for n, f in ty.objFields:
-        result.add("\n     [" & $f.id & "] " & n & ": " & f.ty.name)
+        result.add("\n      [" & $f.id & "] " & n & ": " & f.ty.name)
 
 proc addSimpleType*(module: var Module, name: string) =
   module.types.add(name, RodType(name: name, kind: tkSimple))
