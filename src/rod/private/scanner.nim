@@ -199,6 +199,7 @@ proc next*(scan: var Scanner): Token =
       if scan.current == '\x00':
         scan.error("Unterminated string literal")
       str.add(scan.current)
+      scan.advance()
     scan.advance()
     result = Token(kind: tokString, stringVal: str)
   of IdentStartChars:
@@ -213,6 +214,16 @@ proc next*(scan: var Scanner): Token =
       result = Token(kind: tokOperator, operator: ident, prec: Operators[ident])
     else:
       result = Token(kind: tokIdent, ident: ident)
+  of '`':
+    scan.advance()
+    var ident = ""
+    while scan.current != '`':
+      if scan.current == '\x00':
+        scan.error("Unterminated stropped identifier")
+      ident.add(scan.current)
+      scan.advance()
+    scan.advance()
+    result = Token(kind: tokIdent, ident: ident)
   else: scan.error("Unexpected character: '" & scan.current & "'")
   result.ln = ln
   result.col = col
