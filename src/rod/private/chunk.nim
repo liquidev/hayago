@@ -20,7 +20,7 @@ type
     opcPopG = "popG" ## Pop global
     opcPushL = "pushL" ## Push local
     opcPopL = "popL" ## Pop local
-    opcConsObj = "consObj" ## Construct object
+    opcConstrObj = "constrObj" ## Construct object
     opcPushF = "pushF" ## Push field
     opcPopF = "popF" ## Pop field
     opcDiscard = "discard" ## Discard 1 value
@@ -144,7 +144,7 @@ proc `$`*(module: Module): string =
     of tkObject:
       result.add("object")
       for n, f in ty.objFields:
-        result.add("\n    - " & n & ": " & f.ty.name)
+        result.add("\n     [" & $f.id & "] " & n & ": " & f.ty.name)
 
 proc addSimpleType*(module: var Module, name: string) =
   module.types.add(name, RodType(name: name, kind: tkSimple))

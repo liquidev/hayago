@@ -40,7 +40,7 @@ proc disassemble*(chunk: Chunk): string =
     of opcPushG, opcPopG:
       result.add(chunk.consts[rvString][chunk.getU16(pc + 1)].str)
       inc(pc, 3)
-    of opcPushL, opcPopL, opcConsObj, opcPushF, opcPopF, opcNDiscard:
+    of opcPushL, opcPopL, opcConstrObj, opcPushF, opcPopF, opcNDiscard:
       result.add($chunk.getU8(pc + 1))
       inc(pc, 2)
     of opcJumpFwd, opcJumpFwdF, opcJumpFwdT, opcJumpBack:

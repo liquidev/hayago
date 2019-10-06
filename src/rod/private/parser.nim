@@ -159,10 +159,10 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
   of tokDot: # Dot operator '.'
     result = Node(kind: nkDot,
                   children: @[left, parseExpr(scan, 10)])
-  of tokLPar: # Call or object constructord
+  of tokLPar: # Call or object constructor
     if scan.pattern([tokIdent, tokColon]):
       # Object constructor
-      var fields: seq[Node]
+      var fields = @[parseType(scan, left)]
       while true:
         if scan.atEnd:
           scan.error("Missing right paren ')'")

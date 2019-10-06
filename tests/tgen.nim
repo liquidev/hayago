@@ -4,7 +4,7 @@ import unittest
 import rod/private/scanner
 import rod/private/parser
 import rod/private/chunk
-import rod/private/compiler
+import rod/private/codegen
 import rod/private/disassembler
 
 template benchmark(name, body) =
@@ -30,7 +30,7 @@ template compile(input: string) =
       module = initModule("testcase")
       chunk = initChunk()
       cp = initCompiler()
-    cp.compileScript(chunk, module, ast)
+    cp.genScript(chunk, module, ast)
   dumpTokens(input)
   echo ast
   echo module
@@ -97,4 +97,6 @@ suite "compiler":
     object Hello {
       x, y: number
     }
+
+    var instance = Hello(x: 10, y: 20)
     """)

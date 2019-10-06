@@ -246,6 +246,29 @@ proc infix(node: Node): RodType {.codegen.} =
       result = module.ty("bool")
     else: discard
 
+proc objConstr(node: Node): RodType {.codegen.} =
+  result = gen.getTy(module, node[0])
+  if result.kind != tkObject:
+    node.error(fmt"<{result.name}> is not an object type")
+  if node.children.len - 1 < result.objFields.len:
+    node.error("All fields of an object must be initialized")
+  var fields = newSeq[tuple[node: Node, field: Field]](result.objFields.len)
+  for f in node.children[1..^1]:
+    let name = f[0].ident
+    if name notin result.objFields:
+      node.error(fmt"<{result.name}> does not have a field '{name}'")
+    let field = result.objFields[name]
+    fields[field.id] = (node: f[1], field: field)
+  for i in countdown(fields.len - 1, 0):
+    let
+      (v, f) = fields[i]
+      ty = gen.genExpr(chunk, module, v)
+    if ty != f.ty:
+      node.error(fmt"Type mismatch: field has type <{f.ty.name}>, but got " &
+                 fmt"<{ty.name}>")
+  chunk.emit(opcConstrObj)
+  chunk.emit(uint8(fields.len))
+
 proc genBlock(node: Node, isStmt: bool): RodType {.codegen.}
 
 proc genIf(node: Node, isStmt: bool): RodType {.codegen.} =
@@ -304,6 +327,8 @@ proc genExpr(node: Node): RodType {.codegen.} =
     result = gen.prefix(chunk, module, node)
   of nkInfix:
     result = gen.infix(chunk, module, node)
+  of nkObjConstr:
+    result = gen.objConstr(chunk, module, node)
   of nkIf:
     result = gen.genIf(chunk, module, node, false)
   else: node.error("Value does not have a valid type")
