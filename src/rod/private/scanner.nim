@@ -88,9 +88,9 @@ const Keywords = {
   "proc": tokProc
 }.toTable()
 
-const UTF8Chars = {'\x80'..'\xff'}
-const IdentStartChars = strutils.IdentStartChars + UTF8Chars
-const IdentChars = strutils.IdentChars + UTF8Chars
+const Utf8Chars = {'\x80'..'\xff'}
+const IdentStartChars = strutils.IdentStartChars + Utf8Chars
+const IdentChars = strutils.IdentChars + Utf8Chars
 
 proc error*(scan: Scanner, msg: string) =
   raise (ref RodError)(kind: reSyntax,
