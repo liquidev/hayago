@@ -28,3 +28,6 @@ suite "literals":
     scan("if x {} elif x {} else {}")
     scan("while true {}")
     scan("for x in y {}")
+  test "object and proc":
+    scan("object X { }")
+    scan("proc x() -> number { }")
