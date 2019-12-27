@@ -304,21 +304,6 @@ proc parseObject(): Node {.rule.} =
   discard scan.next()
   result = Node(kind: nkObject, children: fields)
 
-proc parseProcHead(anon: bool): Node {.rule.} =
-  ## Parses a procedure header.
-  # procParams <- '(' *identDefs ')' ?('->' type)
-  # anonProcHead <- 'proc' procParams
-  # procHead <- 'proc' Ident procParams
-  scan.expect(tokProc)
-  result = Node(kind: nkProc, children: newSeq[Node](5))
-  if anon:
-    result.children[0] = Node(kind: nkEmpty)
-  else:
-    result.children[0] = Node(kind: nkIdent,
-                              ident: scan.expect(tokIdent,
-                                                 "Proc name expected").ident)
-  # TODO: generic parameters
-
 proc parseBreak(): Node {.rule.} =
   ## Parses a break statement.
   # break <- 'break'
