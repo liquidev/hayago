@@ -35,12 +35,12 @@ proc disassemble*(chunk: Chunk): string =
     result.add("  " & alignLeft($opc, 12))
     case opc
     of opcPushN:
-      result.add($chunk.consts[rvNumber][chunk.getU16(pc + 1)])
-      inc(pc, 3)
+      result.add($chunk.getValue(pc + 1).numberVal)
+      inc(pc, 1 + ValueSize)
     of opcPushG, opcPopG:
-      result.add(chunk.consts[rvString][chunk.getU16(pc + 1)].str)
+      result.add(escape(chunk.strings[chunk.getU16(pc + 1)]))
       inc(pc, 3)
-    of opcPushL, opcPopL, opcConstrObj, opcPushF, opcPopF, opcNDiscard:
+    of opcPushL, opcPopL, opcConstrObj, opcPushF, opcPopF, opcDiscard:
       result.add($chunk.getU8(pc + 1))
       inc(pc, 2)
     of opcJumpFwd, opcJumpFwdF, opcJumpFwdT, opcJumpBack:
@@ -51,9 +51,10 @@ proc disassemble*(chunk: Chunk): string =
       else:
         result.add(toHex(pc - chunk.getU16(pc + 1).int, 8))
       inc(pc, 3)
-    of opcPushTrue, opcPushFalse, opcDiscard,
+    of opcPushTrue, opcPushFalse,
        opcInvB, opcEqB,
        opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
        opcEqN, opcLessN, opcLessEqN, opcGreaterN, opcGreaterEqN,
        opcHalt: inc(pc, 1)
     result.add('\n')
+

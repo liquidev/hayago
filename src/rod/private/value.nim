@@ -1,47 +1,36 @@
 #--
 # the rod scripting language
-# copyright (C) iLiquid, 2019
+# copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
 
-import strutils
+const
+  ValueSize* = max([
+    sizeof(bool),
+    sizeof(float),
+    sizeof(string)
+  ])
 
 type
-  RodValueKind* = enum
-    rvNumber
-    rvString
-  RodValue* = object
-    case kind: RodValueKind
-    of rvNumber: numberVal: float
-    of rvString: stringVal: string
+  Value* {.union.} = object ## A value. \
+    ## Values are union types. They don't need to be annotated with an extra
+    ## type field, because all types are resolved and checked statically. This
+    ## improves execution time greatly, because runtime checks involving value
+    ## types are not required.
+    rawBytes*: array[ValueSize, uint8]
+    boolVal*: bool
+    numberVal*: float
+    stringVal*: string
 
-proc kind*(value: RodValue): RodValueKind = value.kind
+proc boolStr*(value: Value): string =
+  result = $value.boolVal
 
-proc `==`*(a, b: RodValue): bool =
-  if a.kind != b.kind: return false
-  result =
-    case a.kind
-    of rvNumber: a.numberVal == b.numberVal
-    of rvString: a.stringVal == b.stringVal
+proc numberStr*(value: Value): string =
+  result = $value.numberVal
 
-proc `$`*(value: RodValue): string =
-  result =
-    case value.kind
-    of rvNumber: $value.numberVal
-    of rvString: escape(value.stringVal)
+proc initValue*(value: bool): Value =
+  result = Value(boolVal: value)
 
-proc rod*[T: SomeNumber](value: T): RodValue =
-  result = RodValue(kind: rvNumber, numberVal: float(value))
+proc initValue*(value: float): Value =
+  result = Value(numberVal: value)
 
-proc rod*(value: string): RodValue =
-  result = RodValue(kind: rvString, stringVal: value)
-
-proc num*(value: RodValue): float =
-  result =
-    if value.kind == rvNumber: value.numberVal
-    else: 0
-
-proc str*(value: RodValue): string =
-  result =
-    if value.kind == rvString: value.stringVal
-    else: ""

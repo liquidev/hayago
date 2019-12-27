@@ -29,8 +29,8 @@ template compile(input: string) =
     var
       module = initModule("testcase")
       chunk = initChunk()
-      cp = initCompiler()
-    cp.genScript(chunk, module, ast)
+      cp = initCodeGen(module, chunk)
+    cp.genScript(ast)
   dumpTokens(input)
   echo ast
   echo module

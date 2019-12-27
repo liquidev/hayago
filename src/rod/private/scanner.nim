@@ -14,6 +14,7 @@ type
     file*, input: string
     pos, ln*, col*: int
   TokenKind* = enum
+    tokNone = "<invalid>"
     # Literals
     tokTrue = "true", tokFalse = "false"
     tokNumber = "Number", tokString = "String"

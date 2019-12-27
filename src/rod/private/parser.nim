@@ -21,6 +21,7 @@ type
     nkCall
     nkGeneric
     nkObject, nkObjFields, nkObjConstr
+    nkProc
   Node* = ref object
     ln*, col*: int
     file*: string
@@ -114,7 +115,31 @@ proc parseIf(): Node {.rule.} =
     children.add(parseBlock(scan))
   result = Node(kind: nkIf, children: children)
 
-proc parseType(typeExpr: Node): Node {.rule.} =
+# XXX: This is a pretty bad solution as it requires two different procs to be
+# changed if something changes in the codebase
+proc parseType(): Node {.rule.} =
+  let tok = scan.next()
+  case tok.kind
+  of tokIdent:
+    result = Node(kind: nkIdent, ident: tok.ident)
+  else:
+    scan.error("Type expected")
+  if scan.peek().kind == tokLBrk:
+    discard scan.next()
+    var gParams = @[result]
+    while true:
+      if scan.atEnd:
+        scan.error("Right bracket ']' expected")
+      gParams.add(parseType(scan))
+      let next = scan.next()
+      case next.kind
+      of tokComma: continue
+      of tokRBrk: break
+      else:
+        scan.error("Comma ',' or right bracket ']' expected")
+    result = Node(kind: nkGeneric, children: gParams)
+
+proc intoType(typeExpr: Node): Node {.rule.} =
   if typeExpr.kind == nkIdent:
     result = typeExpr
   elif typeExpr.kind == nkIndex:
@@ -122,10 +147,10 @@ proc parseType(typeExpr: Node): Node {.rule.} =
       scan.error("Generic type must begin with type name")
     var params: seq[Node]
     for n in typeExpr.children:
-      params.add(parseType(scan, n))
+      params.add(intoType(scan, n))
     result = Node(kind: nkGeneric, children: params)
-  else:
-    scan.error("Type expected")
+
+
 
 proc parsePrefix(token: Token): Node {.rule.} =
   case token.kind
@@ -162,7 +187,7 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
   of tokLPar: # Call or object constructor
     if scan.pattern([tokIdent, tokColon]):
       # Object constructor
-      var fields = @[parseType(scan, left)]
+      var fields = @[intoType(scan, left)]
       while true:
         if scan.atEnd:
           scan.error("Missing right paren ')'")
@@ -204,7 +229,7 @@ proc parseVar(): Node {.rule.} =
     if scan.peek().kind == tokColon:
       discard scan.next()
       # Parse with prec = 9 to avoid any binary operators
-      ty = parseType(scan, parseExpr(scan, prec = 9))
+      ty = parseType(scan)
     scan.expectOp("=")
     let val = scan.parseExpr()
     result.children.add(Node(kind: nkInfix, children: @[
@@ -226,7 +251,7 @@ proc parseWhile(): Node {.rule.} =
 
 proc parseObject(): Node {.rule.} =
   discard scan.next()
-  let name = parseType(scan, parseExpr(scan))
+  let name = parseType(scan)
   scan.expect(tokLBrace)
   var fields: seq[Node]
   fields.add(name)
@@ -243,13 +268,26 @@ proc parseObject(): Node {.rule.} =
       of tokComma: continue
       of tokColon: break
       else: scan.error("Comma ',' or colon ':' expected")
-    var ty = parseType(scan, parseExpr(scan))
+    var ty = parseType(scan)
     fieldNames.add(ty)
     fields.add(Node(kind: nkObjFields, children: fieldNames))
     if not scan.linefeed() and scan.peek().kind != tokRBrace:
       scan.error("Line feed expected after object field")
   discard scan.next()
   result = Node(kind: nkObject, children: fields)
+
+proc parseProcHead(anon: bool): Node {.rule.} =
+  scan.expect(tokProc)
+  result = Node(kind: nkProc, children: newSeq[Node](5))
+  if anon:
+    result.children[0] = Node(kind: nkEmpty)
+  else:
+    result.children[0] = Node(kind: nkIdent,
+                              ident: scan.expect(tokIdent,
+                                                 "Proc name expected").ident)
+  # TODO: generic parameters
+
+
 
 proc parseStmt(): Node {.rule.} =
   result =

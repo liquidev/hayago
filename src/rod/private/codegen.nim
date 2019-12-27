@@ -11,310 +11,373 @@ import tables
 import chunk
 import common
 import parser
-import types
 import value
 
 type
   Loop = object
     before: int
     breaks: seq[int]
-  Scope = object
-    locals: Table[string, Variable]
-    types: Table[string, RodType]
+    bottomScope: int
   CodeGen* = object
+    module: Module
+    chunk: Chunk
     scopes: seq[Scope]
     loops: seq[Loop]
 
+proc initCodeGen*(module: Module, chunk: Chunk): CodeGen =
+  result = CodeGen(module: module, chunk: chunk)
+
 proc error(node: Node, msg: string) =
+  ## Raise a compile error on the given node.
   raise (ref RodError)(kind: reCompile, ln: node.ln, col: node.col,
                        msg: fmt"{node.file} {node.ln}:{node.col} {msg}")
 
 template genGuard(body) =
-  chunk.ln = node.ln
-  chunk.col = node.col
+  ## Wraps ``body`` in a "guard" used for code generation. The guard sets the
+  ## line information in the target chunk. This is a helper used by {.codegen.}.
+  gen.chunk.ln = node.ln
+  gen.chunk.col = node.col
   body
 
-macro codegen(pc) =
-  pc[3].insert(1,
-    newIdentDefs(ident"module", newNimNode(nnkVarTy).add(ident"Module")))
-  pc[3].insert(1,
-    newIdentDefs(ident"chunk", newNimNode(nnkVarTy).add(ident"Chunk")))
-  pc[3].insert(1,
-    newIdentDefs(ident"gen", newNimNode(nnkVarTy).add(ident"CodeGen")))
-  if pc[6].kind != nnkEmpty:
-    pc[6] = newCall("genGuard", pc[6])
-  result = pc
+macro codegen(theProc: untyped): untyped =
+  ## Wrap ``theProc``'s body in a call to ``genGuard``.
+  theProc.params.insert(1, newIdentDefs(ident"gen",
+                                        newTree(nnkVarTy, ident"CodeGen")))
+  if theProc[6].kind != nnkEmpty:
+    theProc[6] = newCall("genGuard", theProc[6])
+  result = theProc
 
-proc getConst(chunk: var Chunk, val: RodValue): uint16 =
-  for i, c in chunk.consts[val.kind]:
-    if c == val: return i.uint16
-  result = chunk.consts[val.kind].len.uint16
-  chunk.consts[val.kind].add(val)
+proc varCount(scope: Scope): int =
+  ## Count the number of variables in a scope.
+  for _, sym in scope.syms:
+    if sym.kind in skVars:
+      inc(result)
+
+proc currentScope(gen: CodeGen): Scope =
+  ## Returns the current scope.
+  result = gen.scopes[^1]
 
 proc pushScope(gen: var CodeGen) =
+  ## Push a new scope.
   gen.scopes.add(Scope())
 
-proc popScope(gen: var CodeGen, chunk: var Chunk) =
-  let v = gen.scopes[^1].locals.len
-  if v > 0:
-    chunk.emit(opcNDiscard)
-    chunk.emit(v.uint8)
+proc popScope(gen: var CodeGen) =
+  ## Pop the top scope, discarding its variables.
+  gen.chunk.emit(opcDiscard)
+  gen.chunk.emit(gen.currentScope.varCount.uint8)
   discard gen.scopes.pop()
 
-proc declareVar(gen: var CodeGen, module: var Module,
-                name: string, mut: bool, ty: RodType) =
-  if gen.scopes.len > 0:
-    gen.scopes[^1].locals.add(name, Variable(
-      name: name, isMutable: mut, ty: ty,
-      kind: vkLocal,
-      stackPos: gen.scopes[^1].locals.len,
-      scope: gen.scopes.len))
-  else:
-    module.globals.add(name, Variable(name: name, isMutable: mut, ty: ty,
-                                      kind: vkGlobal))
+proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym) =
+  ## Declare a new variable with the given ``name``, of the given ``kind``, with
+  ## the given type ``ty``.
 
-proc getVar(gen: CodeGen, module: Module, node: Node): Variable =
+  # create the symbol for the variable
+  assert kind in skVars, "The kind must be a variable."
+  var sym = newSym(kind, name)
+  sym.varTy = ty
+  sym.varSet = false
   if gen.scopes.len > 0:
+    # declare a local
+    sym.varLocal = true
+    sym.varStackPos = gen.currentScope.varCount
+    gen.currentScope.syms.add(name.ident, sym)
+  else:
+    # declare a global
+    sym.varLocal = false
+    gen.module.syms.add(name.ident, sym)
+
+proc lookup(gen: CodeGen, name: Node): Sym =
+  ## Look up the symbol with the given ``name``.
+  if gen.scopes.len > 0:
+    # try to find a local symbol
     for i in countdown(gen.scopes.len - 1, 0):
-      if node.ident in gen.scopes[i].locals:
-        return gen.scopes[i].locals[node.ident]
-  else:
-    if module.globals.hasKey(node.ident):
-      return module.globals[node.ident]
-  node.error(fmt"Attempt to reference undeclared variable '{node.ident}'")
+      if name.ident in gen.scopes[i].syms:
+        return gen.scopes[i].syms[name.ident]
+  if name.ident in gen.module.syms:
+    # try to find a global symbol
+    return gen.module.syms[name.ident]
+  name.error(fmt"Attempt to reference undeclared symbol '{name.ident}'")
 
-proc popVar(gen: var CodeGen, chunk: var Chunk, module: var Module,
-            node: Node) =
+proc popVar(gen: var CodeGen, name: Node) =
+  ## Pop the value at the top of the stack to the variable ``name``.
+
+  # first of all, look the variable up
   var
-    variable: Variable
+    sym: Sym
     scopeIndex: int
-  if gen.scopes.len > 0:
-    for i in countdown(gen.scopes.len - 1, 0):
-      if node.ident in gen.scopes[i].locals:
-        variable = gen.scopes[i].locals[node.ident]
-        scopeIndex = i
-        break
+    isLocal = false
+  block findVar:
+    # try to find a local
+    if gen.scopes.len > 0:
+      for i in countdown(gen.scopes.len - 1, 0):
+        if name.ident in gen.scopes[i].syms and
+           gen.scopes[i].syms[name.ident].kind in skVars:
+          sym = gen.scopes[i].syms[name.ident]
+          scopeIndex = i
+          isLocal = true
+          break findVar
+    # if there's no local by that name, try to find a global
+    if name.ident in gen.module.syms and
+       gen.module.syms[name.ident].kind in skVars:
+      sym = gen.module.syms[name.ident]
+      isLocal = false
+      break findVar
+    # if no variable was found, error out
+    name.error(fmt"Attempt to assign to undeclared variable '{name.ident}'")
+  if sym.kind == skLet and sym.varSet:
+    # if the variable is 'let' and it's already set, error out
+    name.error(fmt"Attempt to reassign 'let' variable '{name.ident}'")
   else:
-    if module.globals.hasKey(node.ident):
-      variable = module.globals[node.ident]
-  if not variable.isMutable and variable.isSet:
-    node.error(fmt"Attempt to assign to 'let' variable '{node.ident}'")
-  else:
-    if variable.kind == vkLocal:
-      if variable.isSet:
-        chunk.emit(opcPopL)
-        chunk.emit(variable.stackPos.uint8)
-      gen.scopes[scopeIndex].locals[node.ident].isSet = true
+    if isLocal:
+      # if it's a local and it's already been set, use popL, otherwise, just
+      # leave the variable on the stack
+      if sym.varSet:
+        gen.chunk.emit(opcPopL)
+        gen.chunk.emit(sym.varStackPos.uint8)
     else:
-      chunk.emit(opcPopG)
-      chunk.emit(chunk.getConst(node.ident.rod))
-      module.globals[node.ident].isSet = true
-    return
-  node.error(fmt"Attempt to assign to undeclared variable '{node.ident}'")
+      # if it's a global, always use popG
+      gen.chunk.emit(opcPopG)
+      gen.chunk.emit(gen.chunk.getString(name.ident))
+    # mark the variable as set
+    sym.varSet = true
 
-proc pushVar(gen: CodeGen, chunk: var Chunk, variable: Variable) =
-  if variable.kind == vkLocal:
-    chunk.emit(opcPushL)
-    chunk.emit(variable.stackPos.uint8)
+proc pushVar(gen: var CodeGen, sym: Sym) =
+  ## Push the variable represented by ``sym`` to the top of the stack.
+  assert sym.kind in skVars, "The symbol must represent a variable."
+  if sym.varLocal:
+    # if the variable is a local, use pushL
+    gen.chunk.emit(opcPushL)
+    gen.chunk.emit(sym.varStackPos.uint8)
   else:
-    chunk.emit(opcPushG)
-    chunk.emit(chunk.getConst(variable.name.rod))
+    # if it's a global, use pushG
+    gen.chunk.emit(opcPushG)
+    gen.chunk.emit(gen.chunk.getString(sym.name.ident))
 
-proc typeName(node: Node): string =
-  case node.kind
-  of nkIdent: result = node.ident
-  of nkIndex:
-    result = "["
-    for i, child in node.children:
-      result.add(child.typeName)
-      if i < node.children.len - 1:
-        result.add(", ")
-    result.add("]")
-  else: discard
+proc genExpr(node: Node): Sym {.codegen.}
 
-proc getTy(gen: CodeGen, module: Module, name: Node): RodType =
-  let oname = name.typeName
-  if gen.scopes.len > 0:
-    for i in countdown(gen.scopes.len - 1, 0):
-      if oname in gen.scopes[i].types:
-        return gen.scopes[i].types[oname]
-  if oname in module.types:
-    return module.ty(oname)
-  name.error(fmt"Attempt to reference non-existent type '{oname}'")
-
-proc genExpr(node: Node): RodType {.codegen.}
-
-proc pushConst(node: Node): RodType {.codegen.} =
+proc pushConst(node: Node): Sym {.codegen.} =
+  ## Generate a push instruction for a constant value.
   case node.kind
   of nkBool:
-    if node.boolVal == true: chunk.emit(opcPushTrue)
-    else: chunk.emit(opcPushFalse)
-    result = module.ty("bool")
+    # bools - use pushTrue and pushFalse
+    if node.boolVal == true: gen.chunk.emit(opcPushTrue)
+    else: gen.chunk.emit(opcPushFalse)
+    result = gen.module.sym"bool"
   of nkNumber:
-    chunk.emit(opcPushN)
-    chunk.emit(chunk.getConst(node.numberVal.rod))
-    result = module.ty("number")
+    # numbers - use pushN with a number Value
+    gen.chunk.emit(opcPushN)
+    gen.chunk.emit(initValue(node.numberVal))
+    result = gen.module.sym"number"
   else: discard
 
-proc prefix(node: Node): RodType {.codegen.} =
-  var
-    typeMismatch = false
-  let ty = gen.genExpr(chunk, module, node[1])
-  if ty == module.ty("number"):
+proc prefix(node: Node): Sym {.codegen.} =
+  ## Generate instructions for a prefix operator.
+  ## TODO: operator overloading.
+  var typeMismatch = false # did a type mismatch occur?
+  let ty = gen.genExpr(node[1]) # generate the operand's code
+  if ty == gen.module.sym"number":
+    # number operators
     case node[0].ident
     of "+": discard # + is a noop
-    of "-": chunk.emit(opcNegN)
-    else: typeMismatch = true
-    if not typeMismatch: result = ty
-  elif ty == module.ty("bool"):
+    of "-": gen.chunk.emit(opcNegN)
+    else: typeMismatch = true # unknown operator
+    result = ty
+  elif ty == gen.module.sym"bool":
+    # bool operators
     case node[0].ident
-    of "not": chunk.emit(opcInvB)
-    else: typeMismatch = true
-    if not typeMismatch: result = ty
+    of "not": gen.chunk.emit(opcInvB)
+    else: typeMismatch = true # unknown operator
+    result = ty
   else: typeMismatch = true
   if typeMismatch:
     node.error(fmt"No overload of '{node[0].ident}' available for <{ty.name}>")
 
-proc infix(node: Node): RodType {.codegen.} =
+proc infix(node: Node): Sym {.codegen.} =
+  ## Generate instructions for an infix operator.
+  ## TODO: operator overloading.
   if node[0].ident notin ["=", "or", "and"]:
-    var typeMismatch = false
+    # primitive operators
+    var typeMismatch = false # did a type mismatch occur?
     let
-      aTy = gen.genExpr(chunk, module, node[1])
-      bTy = gen.genExpr(chunk, module, node[2])
-    if aTy == bTy and aTy == module.ty("number"):
+      aTy = gen.genExpr(node[1]) # generate the left operand's code
+      bTy = gen.genExpr(node[2]) # generate the right operand's code
+    if aTy == bTy and aTy == gen.module.sym"number":
+      # number operators
       case node[0].ident
-      of "+": chunk.emit(opcAddN)
-      of "-": chunk.emit(opcSubN)
-      of "*": chunk.emit(opcMultN)
-      of "/": chunk.emit(opcDivN)
-      of "==": chunk.emit(opcEqN)
-      of "!=": chunk.emit(opcEqN); chunk.emit(opcInvB)
-      of "<": chunk.emit(opcLessN)
-      of "<=": chunk.emit(opcLessEqN)
-      of ">": chunk.emit(opcGreaterN)
-      of ">=": chunk.emit(opcGreaterEqN)
-      else: typeMismatch = true
-      if not typeMismatch: result =
+      # arithmetic
+      of "+": gen.chunk.emit(opcAddN)
+      of "-": gen.chunk.emit(opcSubN)
+      of "*": gen.chunk.emit(opcMultN)
+      of "/": gen.chunk.emit(opcDivN)
+      # relational
+      of "==": gen.chunk.emit(opcEqN)
+      of "!=": gen.chunk.emit(opcEqN); gen.chunk.emit(opcInvB)
+      of "<": gen.chunk.emit(opcLessN)
+      of "<=": gen.chunk.emit(opcLessEqN)
+      of ">": gen.chunk.emit(opcGreaterN)
+      of ">=": gen.chunk.emit(opcGreaterEqN)
+      else: typeMismatch = true # unknown operator
+      result =
         case node[0].ident
-        of "+", "-", "*", "/": module.ty("number")
-        of "==", "!=", "<", "<=", ">", ">=": module.ty("bool")
-        else: module.ty("void")
-    elif aTy == bTy and aTy == module.ty("bool"):
+        # arithmetic operators return numbers
+        of "+", "-", "*", "/": gen.module.sym"number"
+        # relational operators return bools
+        of "==", "!=", "<", "<=", ">", ">=": gen.module.sym"bool"
+        else: nil # type mismatch; we don't care
+    elif aTy == bTy and aTy == gen.module.sym"bool":
+      # bool operators
       case node[0].ident
-      of "==": chunk.emit(opcEqB)
-      of "!=": chunk.emit(opcEqB); chunk.emit(opcInvB)
+      # relational
+      of "==": gen.chunk.emit(opcEqB)
+      of "!=": gen.chunk.emit(opcEqB); gen.chunk.emit(opcInvB)
       else: typeMismatch = true
-      if not typeMismatch: result = aTy
-    else: typeMismatch = true
+      # bool operators return bools (duh.)
+      result = gen.module.sym"bool"
+    else: typeMismatch = true # no operators for given type
     if typeMismatch:
       node.error(fmt"No overload of '{node[0].ident}' available for" &
                  fmt"<{aTy.name}, {bTy.name}>")
   else:
     case node[0].ident
+    # assignment is special
     of "=":
       case node[1].kind
-      of nkIdent:
+      of nkIdent: # to a variable
         let
-          variable = gen.getVar(module, node[1])
-          valTy = gen.genExpr(chunk, module, node[2])
-        if valTy == variable.ty:
-          gen.popVar(chunk, module, node[1])
+          sym = gen.lookup(node[1]) # look the variable up
+          valTy = gen.genExpr(node[2]) # generate the value
+        if valTy == sym.varTy:
+          # if the variable's type matches the type of the value, we're ok
+          gen.popVar(node[1])
         else:
           node.error(fmt"Type mismatch: cannot assign value of type " &
                      fmt"<{valTy.name}> to a variable of type " &
-                     fmt"<{variable.ty.name}>")
-        result = module.ty("void")
-      of nkDot:
+                     fmt"<{sym.varTy.name}>")
+      of nkDot: # to an object field
         if node[1][1].kind != nkIdent:
+          # object fields are always identifiers
           node[1][1].error(fmt"{node[1][1]} is not a valid object field")
         let
-          ty = gen.genExpr(chunk, module, node[1][0])
+          typeSym = gen.genExpr(node[1][0]) # generate the receiver's code
           fieldName = node[1][1].ident
-          valTy = gen.genExpr(chunk, module, node[2])
-        if ty.kind == tkObject and fieldName in ty.objFields:
-          let field = ty.objFields[fieldName]
+          valTy = gen.genExpr(node[2]) # generate the value's code
+        if typeSym.tyKind == tkObject and fieldName in typeSym.objFields:
+          # assign the field if it's valid, using popF
+          let field = typeSym.objFields[fieldName]
           if valTy != field.ty:
             node[2].error(fmt"Type mismatch: field has type <{field.ty.name}>" &
                           fmt" but got <{valTy.name}>")
-          chunk.emit(opcPopF)
-          chunk.emit(field.id.uint8)
+          gen.chunk.emit(opcPopF)
+          gen.chunk.emit(field.id.uint8)
         else:
           node[1].error(fmt"Field '{fieldName}' doesn't exist")
       else: node.error(fmt"Cannot assign to '{($node.kind)[2..^1]}'")
-      result = module.ty("void")
-    of "or":
-      let aTy = gen.genExpr(chunk, module, node[1])
-      chunk.emit(opcJumpFwdT)
-      let hole = chunk.emitHole(2)
-      chunk.emit(opcDiscard)
-      let bTy = gen.genExpr(chunk, module, node[2])
-      if aTy != module.ty("bool") or bTy != module.ty("bool"):
+      # assignment doesn't return anything
+      result = gen.module.sym"void"
+    # ``or`` and ``and`` are special, because they're short-circuiting.
+    # that's why they need a little more special care.
+    of "or": # ``or``
+      let aTy = gen.genExpr(node[1]) # generate the left-hand side
+      # if it's ``true``, jump over the rest of the expression
+      gen.chunk.emit(opcJumpFwdT)
+      let hole = gen.chunk.emitHole(2)
+      # otherwise, check the right-hand side
+      gen.chunk.emit(opcDiscard)
+      gen.chunk.emit(1'u8)
+      let bTy = gen.genExpr(node[2]) # generate the right-hand side
+      if aTy != gen.module.sym"bool" or bTy != gen.module.sym"bool":
         node.error("Operands of 'or' must be booleans")
-      chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
-      result = module.ty("bool")
-    of "and":
-      let aTy = gen.genExpr(chunk, module, node[1])
-      chunk.emit(opcJumpFwdF)
-      let hole = chunk.emitHole(2)
-      chunk.emit(opcDiscard)
-      let bTy = gen.genExpr(chunk, module, node[2])
-      if aTy != module.ty("bool") or bTy != module.ty("bool"):
+      gen.chunk.fillHole(hole, uint16(gen.chunk.code.len - hole + 1))
+      result = gen.module.sym"bool"
+    of "and": # ``and``
+      let aTy = gen.genExpr(node[1]) # generate the left-hand side
+      # if it's ``false``, jump over the rest of the expression
+      gen.chunk.emit(opcJumpFwdF)
+      let hole = gen.chunk.emitHole(2)
+      # otherwise, check the right-hand side
+      gen.chunk.emit(opcDiscard)
+      gen.chunk.emit(1'u8)
+      let bTy = gen.genExpr(node[2]) # generate the right-hand side
+      if aTy != gen.module.sym"bool" or bTy != gen.module.sym"bool":
         node.error("Operands of 'and' must be booleans")
-      chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
-      result = module.ty("bool")
+      gen.chunk.fillHole(hole, uint16(gen.chunk.code.len - hole + 1))
+      result = gen.module.sym"bool"
     else: discard
 
-proc objConstr(node: Node): RodType {.codegen.} =
-  result = gen.getTy(module, node[0])
-  if result.kind != tkObject:
+proc objConstr(node: Node): Sym {.codegen.} =
+  ## Generate code for an object constructor.
+  result = gen.lookup(node[0]) # find the object type that's being constructed
+  if result.tyKind != tkObject:
     node.error(fmt"<{result.name}> is not an object type")
   if node.children.len - 1 < result.objFields.len:
+    # TODO: allow the user to not initialize some fields, and set them to their
+    # types' default values instead.
     node.error("All fields of an object must be initialized")
-  var fields = newSeq[tuple[node: Node, field: Field]](result.objFields.len)
+  # collect the initialized fields into a seq with their values and the fields
+  # themselves
+  var fields: seq[tuple[node: Node, field: ObjectField]]
+  fields.setLen(result.objFields.len)
   for f in node.children[1..^1]:
     let name = f[0].ident
     if name notin result.objFields:
       node.error(fmt"<{result.name}> does not have a field '{name}'")
     let field = result.objFields[name]
     fields[field.id] = (node: f[1], field: field)
+  # iterate the fields and values in reverse, and push them onto the stack.
+  # we iterate in reverse because that's how stacks work.
   for i in countdown(fields.len - 1, 0):
     let
-      (v, f) = fields[i]
-      ty = gen.genExpr(chunk, module, v)
-    if ty != f.ty:
-      node.error(fmt"Type mismatch: field has type <{f.ty.name}>, but got " &
-                 fmt"<{ty.name}>")
-  chunk.emit(opcConstrObj)
-  chunk.emit(uint8(fields.len))
+      (value, field) = fields[i]
+      ty = gen.genExpr(value)
+    if ty != field.ty:
+      node.error(fmt"Type mismatch: field has type <{field.ty.name}>, " &
+                 fmt"but got <{ty.name}>")
+  # construct the object
+  gen.chunk.emit(opcConstrObj)
+  gen.chunk.emit(uint8(fields.len))
 
-proc genGetField(node: Node): RodType {.codegen.} =
+proc genGetField(node: Node): Sym {.codegen.} =
+  ## Generate code for field access.
+  if node[1].kind != nkIdent:
+    node[1].error("{node[1]} is not a valid object field")
   let
-    ty = gen.genExpr(chunk, module, node[0])
-    fieldName = node[1].ident
-  if ty.kind == tkObject and fieldName in ty.objFields:
-    let field = ty.objFields[fieldName]
+    typeSym = gen.genExpr(node[0]) # generate the left-hand side
+    fieldName = node[1].ident # get the field's name
+  if typeSym.tyKind == tkObject and fieldName in typeSym.objFields:
+    # if it's an existent field, pushF it onto the stack.
+    let field = typeSym.objFields[fieldName]
     result = field.ty
-    chunk.emit(opcPushF)
-    chunk.emit(field.id.uint8)
+    gen.chunk.emit(opcPushF)
+    gen.chunk.emit(field.id.uint8)
+  else:
+    node.error("<{typeSym.name}> does not have a field '{fieldName}'")
 
-proc genBlock(node: Node, isStmt: bool): RodType {.codegen.}
+proc genBlock(node: Node, isStmt: bool): Sym {.codegen.}
 
-proc genIf(node: Node, isStmt: bool): RodType {.codegen.} =
+proc genIf(node: Node, isStmt: bool): Sym {.codegen.} =
+  ## Generate code for an if expression/statement.
   var
-    pos = 0
+    pos = 0 # the current position in the node
     jumpsToEnd: seq[int]
-    ifTy: RodType
-    hadElse = false
+    ifTy: Sym # the type of the if expression, ``void`` for an if statement
+    hadElse = false # did the if have an else branch?
   while pos < node.children.len:
+    # iterate through the if statement's nodes
     if node[pos].kind != nkBlock:
-      if gen.genExpr(chunk, module, node[pos]) != module.ty("bool"):
-        node[pos].error("'if' condition must be a boolean")
+      # if it's not a block, it must be an ``if`` or ``elif`` branch
+      if gen.genExpr(node[pos]) != gen.module.sym"bool":
+        node[pos].error("'if' condition must be a <bool>")
       inc(pos)
-      chunk.emit(opcJumpFwdF)
-      let afterBlock = chunk.emitHole(2)
-      chunk.emit(opcDiscard)
-      let blockTy = gen.genBlock(chunk, module, node[pos], isStmt)
+      # if the condition is ``false``, jump over to the next branch
+      gen.chunk.emit(opcJumpFwdF)
+      let afterBlock = gen.chunk.emitHole(2)
+      # otherwise, discard the condition and execute the body
+      gen.chunk.emit(opcDiscard)
+      gen.chunk.emit(1'u8)
+      let blockTy = gen.genBlock(node[pos], isStmt)
       if not isStmt:
+        # if we have an if expression, check if the all branches' types are
+        # the same
         if ifTy == nil:
           ifTy = blockTy
         else:
@@ -322,140 +385,198 @@ proc genIf(node: Node, isStmt: bool): RodType {.codegen.} =
             node[pos].error(fmt"Type mismatch: <{ifTy.name}> expected, but " &
                             fmt"got <{blockTy.name}>")
       if pos < node.children.len - 1:
-        chunk.emit(opcJumpFwd)
-        jumpsToEnd.add(chunk.emitHole(2))
+        # if this isn't the last branch, add a jump to the end of the expression
+        gen.chunk.emit(opcJumpFwd)
+        jumpsToEnd.add(gen.chunk.emitHole(2))
       inc(pos)
-      chunk.fillHole(afterBlock, uint16(chunk.code.len - afterBlock + 1))
+      gen.chunk.fillHole(afterBlock,
+                         uint16(gen.chunk.code.len - afterBlock + 1))
     else:
-      chunk.emit(opcDiscard)
-      let blockTy = gen.genBlock(chunk, module, node[pos], isStmt)
+      # if it's a block, we're in an ``else`` branch
+      # first, we discard the condition
+      gen.chunk.emit(opcDiscard)
+      gen.chunk.emit(1'u8)
+      # and we execute the body
+      let blockTy = gen.genBlock(node[pos], isStmt)
       if not isStmt:
+        # we need to check the branch's type if we're compiling an if expression
         if blockTy != ifTy:
           node[pos].error(fmt"Type mismatch: <{ifTy.name}> expected, but got " &
                           fmt"<{blockTy.name}>")
       hadElse = true
       inc(pos)
   if not hadElse:
-    chunk.emit(opcDiscard)
+    # if we didn't have an else branch, we'll need to discard the condition from
+    # the last ``if``/``elif`` branch
+    gen.chunk.emit(opcDiscard)
+    gen.chunk.emit(1'u8)
+  # after that, we fill all the jumps to the end
   for hole in jumpsToEnd:
-    chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
+    gen.chunk.fillHole(hole, uint16(gen.chunk.code.len - hole + 1))
   result =
-    if isStmt: module.ty("void")
-    else: module.ty("void")
+    # statements are ``void``
+    if isStmt: gen.module.sym"void"
+    # expressions have a type, so return the if's type.
+    else: ifTy
 
-proc genExpr(node: Node): RodType {.codegen.} =
+proc genExpr(node: Node): Sym {.codegen.} =
+  ## Generates code for an expression.
   case node.kind
-  of nkBool, nkNumber:
-    result = gen.pushConst(chunk, module, node)
-  of nkIdent:
-    var variable = gen.getVar(module, node)
-    gen.pushVar(chunk, variable)
-    result = variable.ty
-  of nkPrefix:
-    result = gen.prefix(chunk, module, node)
-  of nkInfix:
-    result = gen.infix(chunk, module, node)
-  of nkDot:
-    result = gen.genGetField(chunk, module, node)
-  of nkObjConstr:
-    result = gen.objConstr(chunk, module, node)
-  of nkIf:
-    result = gen.genIf(chunk, module, node, false)
+  of nkBool, nkNumber: # constants
+    result = gen.pushConst(node)
+  of nkIdent: # variables
+    var varSym = gen.lookup(node)
+    gen.pushVar(varSym)
+    result = varSym.varTy
+  of nkPrefix: # prefix operators
+    result = gen.prefix(node)
+  of nkInfix: # infix operators
+    result = gen.infix(node)
+  of nkDot: # field access
+    result = gen.genGetField(node)
+  of nkObjConstr: # object construction
+    result = gen.objConstr(node)
+  of nkIf: # if expressions
+    result = gen.genIf(node, isStmt = false)
   else: node.error("Value does not have a valid type")
 
 proc genWhile(node: Node) {.codegen.} =
+  ## Generates code for a while loop.
   var
-    isWhileTrue = false
-    afterLoop: int
-  let beforeLoop = chunk.code.len
+    isWhileTrue = false # an optimization for while true loops
+    afterLoop: int # a hole pointer to the end of the loop
+  let beforeLoop = gen.chunk.code.len
+  # begin a new loop
   gen.loops.add(Loop(before: beforeLoop))
-  if node[0].kind == nkBool:
-    if node[0].boolVal == true: isWhileTrue = true
+  if node[0].kind == nkBool: # if the condition is a bool literal
+    if node[0].boolVal == true: isWhileTrue = true # while true is optimized
     else: return # while false is a noop
   if not isWhileTrue:
-    if gen.genExpr(chunk, module, node[0]) != module.ty("bool"):
-      node[0].error("'while' condition must be a boolean")
-    chunk.emit(opcJumpFwdF)
-    afterLoop = chunk.emitHole(2)
-    chunk.emit(opcDiscard)
-  discard gen.genBlock(chunk, module, node[1], true)
-  chunk.emit(opcJumpBack)
-  chunk.emit(uint16(chunk.code.len - beforeLoop - 1))
+    # if it's not a while true loop, execute the condition
+    if gen.genExpr(node[0]) != gen.module.sym"bool":
+      node[0].error("'while' condition must be a <bool>")
+    # if it's false, jump over the loop's body
+    gen.chunk.emit(opcJumpFwdF)
+    afterLoop = gen.chunk.emitHole(2)
+    # otherwise, discard the condition, and execute the body
+    gen.chunk.emit(opcDiscard)
+    gen.chunk.emit(1'u8)
+  # generate the body. we don't care about its type, because while loops are not
+  # expressions
+  discard gen.genBlock(node[1], isStmt = true)
+  # after the body's done, jump back to reevaluate the condition
+  gen.chunk.emit(opcJumpBack)
+  gen.chunk.emit(uint16(gen.chunk.code.len - beforeLoop - 1))
   if not isWhileTrue:
-    chunk.fillHole(afterLoop, uint16(chunk.code.len - afterLoop + 1))
+    # if it wasn't a while true, we need to fill in the hole after the loop
+    gen.chunk.fillHole(afterLoop, uint16(gen.chunk.code.len - afterLoop + 1))
   for brk in gen.loops[^1].breaks:
-    chunk.fillHole(brk, uint16(chunk.code.len - brk + 1))
+    # we also need to fill any breaks
+    gen.chunk.fillHole(brk, uint16(gen.chunk.code.len - brk + 1))
+  # we're now done with the loop.
   discard gen.loops.pop()
 
 proc genBreak(node: Node) {.codegen.} =
-  if gen.loops.len == 0:
+  ## Generate code for a ``break`` statement.
+  if gen.loops.len < 1:
     node.error("'break' can only be used in a loop")
-  chunk.emit(opcNDiscard)
-  chunk.emit(gen.scopes[^1].locals.len.uint8)
-  chunk.emit(opcJumpFwd)
-  gen.loops[^1].breaks.add(chunk.emitHole(2))
+  # discard the loop's variables
+  # XXX: there's a bug here; if break is used inside a block nested in the loop,
+  # the variables from the block are not discarded!
+  gen.chunk.emit(opcDiscard)
+  gen.chunk.emit(gen.currentScope.varCount.uint8)
+  # jump past the loop
+  gen.chunk.emit(opcJumpFwd)
+  gen.loops[^1].breaks.add(gen.chunk.emitHole(2))
 
 proc genContinue(node: Node) {.codegen.} =
+  ## Generate code for a ``continue`` statement.
   if gen.loops.len < 1:
     node.error("'continue' can only be used in a loop")
-  chunk.emit(opcNDiscard)
-  chunk.emit(gen.scopes[^1].locals.len.uint8)
-  chunk.emit(opcJumpBack)
-  chunk.emit(uint16(chunk.code.len - gen.loops[^1].before))
+  # discard the loop's variables
+  # XXX: there's a bug here; see comments in genBreak
+  gen.chunk.emit(opcDiscard)
+  gen.chunk.emit(gen.currentScope.varCount.uint8)
+  # jump back to the condition
+  gen.chunk.emit(opcJumpBack)
+  gen.chunk.emit(uint16(gen.chunk.code.len - gen.loops[^1].before))
 
 proc genObject(node: Node) {.codegen.} =
-  var ty = RodType(kind: tkObject, name: node[0].typeName)
+  ## Process an object declaration, and add the new type into the current
+  ## module or scope.
+
+  # create a new type for the object
+  var ty = newType(tkObject, node[0])
   for fields in node.children[1..^1]:
-    let fieldsTy = gen.getTy(module, fields.children[^1])
-    var fieldNames: seq[string]
+    # get the fields' type
+    let fieldsTy = gen.lookup(fields.children[^1])
+    # create all the fields with the given type
     for name in fields.children[0..^2]:
-      fieldNames.add(name.ident)
-    for name in fieldNames:
-      ty.objFields.add(name, (ty.objFields.len, name, fieldsTy))
+      ty.objFields.add(name.ident,
+                       (id: ty.objFields.len, name: name, ty: fieldsTy))
   if gen.scopes.len > 0:
-    gen.scopes[^1].types.add(ty.name, ty)
+    # local type
+    gen.currentScope.syms.add(ty.name.ident, ty)
   else:
-    module.types.add(ty.name, ty)
+    # global type
+    gen.module.syms.add(ty.name.ident, ty)
 
 proc genStmt(node: Node) {.codegen.} =
+  ## Generate code for a statement.
   case node.kind
-  of nkLet, nkVar:
+  of nkLet, nkVar: # variable declarations
     for decl in node.children:
-      let valTy = gen.genExpr(chunk, module, decl[2])
+      let valTy = gen.genExpr(decl[2]) # generate the value
       if decl[3].kind != nkEmpty:
-        let expectedTy = gen.getTy(module, decl[3])
+        # if an explicit type was specified, check if the value's type matches
+        let expectedTy = gen.lookup(decl[3])
         if valTy != expectedTy:
           decl[2].error("Value does not match the specified type")
-      gen.declareVar(module, decl[1].ident, node.kind == nkVar, valTy)
-      gen.popVar(chunk, module, decl[1])
-  of nkBlock: discard gen.genBlock(chunk, module, node, true)
-  of nkIf: discard gen.genIf(chunk, module, node, true)
-  of nkWhile: gen.genWhile(chunk, module, node)
-  of nkBreak: gen.genBreak(chunk, module, node)
-  of nkContinue: gen.genContinue(chunk, module, node)
-  of nkObject: gen.genObject(chunk, module, node)
-  else:
-    let ty = gen.genExpr(chunk, module, node)
-    if ty != module.ty("void"):
-      chunk.emit(opcDiscard)
+      # declare the variable
+      gen.declareVar(decl[1],
+                     if node.kind == nkVar: skVar
+                     else: skLet,
+                     valTy)
+      # and pop the value into it
+      gen.popVar(decl[1])
+  of nkBlock: discard gen.genBlock(node, true) # block statement
+  of nkIf: discard gen.genIf(node, true) # if statement
+  of nkWhile: gen.genWhile(node) # while loop
+  of nkBreak: gen.genBreak(node) # break statement
+  of nkContinue: gen.genContinue(node) # continue statement
+  of nkObject: gen.genObject(node) # object declaration
+  else: # expression statement
+    let ty = gen.genExpr(node)
+    if ty != gen.module.sym"void":
+      # if the expression's type if non-void, discard the result.
+      # TODO: discard statement for clarity
+      gen.chunk.emit(opcDiscard)
+      gen.chunk.emit(1'u8)
 
-proc genBlock(node: Node, isStmt: bool): RodType {.codegen.} =
+proc genBlock(node: Node, isStmt: bool): Sym {.codegen.} =
+  ## Generate a block of code.
+
+  # every block creates a new scope
   gen.pushScope()
   for i, s in node.children:
     if isStmt:
-      gen.genStmt(chunk, module, s)
+      # if it's a statement block, generate its children normally
+      gen.genStmt(s)
     else:
+      # otherwise, treat the last statement as an expression (and the value of
+      # the block)
       if i < node.children.len - 1:
-        gen.genStmt(chunk, module, s)
+        gen.genStmt(s)
       else:
-        result = gen.genExpr(chunk, module, s)
-  gen.popScope(chunk)
-  if isStmt: result = module.ty("void")
+        result = gen.genExpr(s)
+  # pop the block's scope
+  gen.popScope()
+  # if it was a statement, the block's type is void
+  if isStmt: result = gen.module.sym"void"
 
 proc genScript*(node: Node) {.codegen.} =
+  ## Generates the code for a full script.
   for s in node.children:
-    gen.genStmt(chunk, module, s)
-  chunk.emit(opcHalt)
+    gen.genStmt(s)
+  gen.chunk.emit(opcHalt)
 
-proc initCompiler*(): CodeGen =
-  result = CodeGen()
