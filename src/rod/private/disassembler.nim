@@ -9,7 +9,7 @@ import strutils
 import chunk
 import value
 
-proc disassemble*(chunk: Chunk): string =
+proc disassemble*(chunk: Chunk, input = ""): string =
   block dumpHex:
     var col = 0
     for i in chunk.code:
@@ -19,42 +19,50 @@ proc disassemble*(chunk: Chunk): string =
         result.add("\n")
         col = 0
     result.add("\n")
+  let inputLines = input.splitLines()
   var
     pc = 0
     lineInfo: LineInfo
+    inputLine = inputLines[0]
   while pc < chunk.code.len:
-    result.add(pc.toHex(8) & " ")
+    var line = ""
+    line.add(pc.toHex(8) & " ")
     let
       opc = chunk.getOpcode(pc)
       li = chunk.getLineInfo(pc)
     if lineInfo.ln == li.ln:
-      result.add("   ·")
+      line.add("   ·")
+      inputLine = ""
     else:
-      result.add(align($li.ln, 4))
+      line.add(align($li.ln, 4))
+      inputLine = inputLines[li.ln - 1]
     lineInfo = li
-    result.add("  " & alignLeft($opc, 12))
+    line.add("  " & alignLeft($opc, 12))
     case opc
     of opcPushN:
-      result.add($chunk.getValue(pc + 1).numberVal)
+      line.add($chunk.getValue(pc + 1).numberVal)
       inc(pc, 1 + ValueSize)
     of opcPushG, opcPopG:
-      result.add(escape(chunk.strings[chunk.getU16(pc + 1)]))
+      line.add(escape(chunk.strings[chunk.getU16(pc + 1)]))
       inc(pc, 3)
     of opcPushL, opcPopL, opcConstrObj, opcPushF, opcPopF, opcDiscard:
-      result.add($chunk.getU8(pc + 1))
+      line.add($chunk.getU8(pc + 1))
       inc(pc, 2)
     of opcJumpFwd, opcJumpFwdF, opcJumpFwdT, opcJumpBack:
-      result.add(alignLeft($chunk.getU16(pc + 1), 6))
-      result.add("→ ")
+      line.add(alignLeft($chunk.getU16(pc + 1), 6))
+      line.add("→ ")
       if opc in {opcJumpFwd, opcJumpFwdF, opcJumpFwdT}:
-        result.add(toHex(pc + chunk.getU16(pc + 1).int, 8))
+        line.add(toHex(pc + chunk.getU16(pc + 1).int, 8))
       else:
-        result.add(toHex(pc - chunk.getU16(pc + 1).int, 8))
+        line.add(toHex(pc - chunk.getU16(pc + 1).int, 8))
       inc(pc, 3)
     of opcPushTrue, opcPushFalse,
        opcInvB, opcEqB,
        opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
        opcEqN, opcLessN, opcLessEqN, opcGreaterN, opcGreaterEqN,
        opcHalt: inc(pc, 1)
-    result.add('\n')
+    if inputLine != "":
+      line = alignLeft(line, 48) & inputLine
+    line.add('\n')
+    result.add(line)
 

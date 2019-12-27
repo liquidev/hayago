@@ -4,6 +4,8 @@
 # licensed under the MIT license
 #--
 
+## The parser. Rules are commented with npeg-like syntax.
+
 import macros
 import strutils
 
@@ -46,6 +48,7 @@ proc `[]`*(node: Node, index: int): Node =
   result = node.children[index]
 
 proc `$`*(node: Node, showLineInfo = false): string =
+  ## Stringify a node into a lisp representation.
   case node.kind
   of nkEmpty: result = "<empty>"
   of nkBool: result = $node.boolVal
@@ -68,6 +71,7 @@ proc `$`*(node: Node, showLineInfo = false): string =
     result.add(")")
 
 template ruleGuard(body) =
+  ## Helper used by {.rule.} to update line info appropriately for nodes.
   let
     ln = scan.ln
     col = scan.col
@@ -77,6 +81,8 @@ template ruleGuard(body) =
   result.file = scan.file
 
 macro rule(pc) =
+  ## Adds a ``scan`` parameter to a proc and wraps its body in a call to
+  ## ``ruleGuard``.
   pc[3].insert(1,
     newIdentDefs(ident"scan", newNimNode(nnkVarTy).add(ident"Scanner")))
   if pc[6].kind != nnkEmpty:
@@ -84,6 +90,7 @@ macro rule(pc) =
   result = pc
 
 proc precedence(token: Token): int =
+  ## Returns the infix precedence of a token.
   result =
     case token.kind
     of tokOperator: token.prec
@@ -93,6 +100,8 @@ proc precedence(token: Token): int =
 proc parseExpr(prec = 0): Node {.rule.}
 
 proc parseParExpr(): Node {.rule.} =
+  ## Parses an expression in parentheses.
+  # parExpr <- '(' expr ')'
   result = parseExpr(scan)
   if scan.next().kind != tokRPar:
     scan.error("Right paren ')' expected")
@@ -100,6 +109,8 @@ proc parseParExpr(): Node {.rule.} =
 proc parseBlock(): Node {.rule.}
 
 proc parseIf(): Node {.rule.} =
+  ## Parses an if expression.
+  # if <- 'if' expr block *('elif' expr block) ?(else block)
   var children = @[
     parseExpr(scan),
     parseBlock(scan)
@@ -118,6 +129,8 @@ proc parseIf(): Node {.rule.} =
 # XXX: This is a pretty bad solution as it requires two different procs to be
 # changed if something changes in the codebase
 proc parseType(): Node {.rule.} =
+  ## Parses a type.
+  # type <- Ident ?('[' commaList(type) ']')
   let tok = scan.next()
   case tok.kind
   of tokIdent:
@@ -140,6 +153,7 @@ proc parseType(): Node {.rule.} =
     result = Node(kind: nkGeneric, children: gParams)
 
 proc intoType(typeExpr: Node): Node {.rule.} =
+  ## Converts an expression into a type.
   if typeExpr.kind == nkIdent:
     result = typeExpr
   elif typeExpr.kind == nkIndex:
@@ -150,9 +164,10 @@ proc intoType(typeExpr: Node): Node {.rule.} =
       params.add(intoType(scan, n))
     result = Node(kind: nkGeneric, children: params)
 
-
-
 proc parsePrefix(token: Token): Node {.rule.} =
+  ## Parses a prefix expression.
+  # prefix <- 'true' | 'false' | Number | String | Ident |
+  #           Operator prefix | parExpr | if
   case token.kind
   of tokTrue: result = Node(kind: nkBool, boolVal: true)
   of tokFalse: result = Node(kind: nkBool, boolVal: false)
@@ -168,6 +183,11 @@ proc parsePrefix(token: Token): Node {.rule.} =
   else: scan.error("Unexpected token: " & $token.kind)
 
 proc parseInfix(left: Node, token: Token): Node {.rule.} =
+  ## Parses an infix expression.
+  # infix <- InfixOperator expr ^ (operator.prec) |
+  #          '[' expr ']' ^ 10 |
+  #          '.' expr ^ 10 |
+  #          '(' (commaList(expr) | commaList(Ident ':' expr)) ')' ^ 10
   case token.kind
   of tokOperator: # Binary operator
     if token.operator notin ["not", "->", "$"]:
@@ -210,6 +230,8 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
   else: scan.error("Unexpected token: " & $token.kind)
 
 proc parseExpr(prec = 0): Node {.rule.} =
+  ## Parses an expression.
+  # expr <- prefix *infix
   var token = scan.next()
   result = parsePrefix(scan, token)
   if result == nil:
@@ -221,6 +243,8 @@ proc parseExpr(prec = 0): Node {.rule.} =
     result = parseInfix(scan, result, token)
 
 proc parseVar(): Node {.rule.} =
+  ## Parses a variable declaration.
+  # var <- ('var' | 'let') Ident ?(':' expr(prec > 9)) '=' expr
   result = Node(kind: if scan.next().kind == tokVar: nkVar
                       else: nkLet)
   while true:
@@ -228,7 +252,6 @@ proc parseVar(): Node {.rule.} =
     var ty = Node(kind: nkEmpty)
     if scan.peek().kind == tokColon:
       discard scan.next()
-      # Parse with prec = 9 to avoid any binary operators
       ty = parseType(scan)
     scan.expectOp("=")
     let val = scan.parseExpr()
@@ -243,6 +266,8 @@ proc parseVar(): Node {.rule.} =
     scan.error("Variable declaration expected")
 
 proc parseWhile(): Node {.rule.} =
+  ## Parses a while loop.
+  # while <- 'while' expr block
   discard scan.next()
   let
     cond = parseExpr(scan)
@@ -250,6 +275,9 @@ proc parseWhile(): Node {.rule.} =
   result = Node(kind: nkWhile, children: @[cond, body])
 
 proc parseObject(): Node {.rule.} =
+  ## Parses an object declaration.
+  # identDefs <- commaList(Ident) ':' type
+  # object <- 'object' type '{' *identDefs '}'
   discard scan.next()
   let name = parseType(scan)
   scan.expect(tokLBrace)
@@ -277,6 +305,10 @@ proc parseObject(): Node {.rule.} =
   result = Node(kind: nkObject, children: fields)
 
 proc parseProcHead(anon: bool): Node {.rule.} =
+  ## Parses a procedure header.
+  # procParams <- '(' *identDefs ')' ?('->' type)
+  # anonProcHead <- 'proc' procParams
+  # procHead <- 'proc' Ident procParams
   scan.expect(tokProc)
   result = Node(kind: nkProc, children: newSeq[Node](5))
   if anon:
@@ -287,20 +319,34 @@ proc parseProcHead(anon: bool): Node {.rule.} =
                                                  "Proc name expected").ident)
   # TODO: generic parameters
 
+proc parseBreak(): Node {.rule.} =
+  ## Parses a break statement.
+  # break <- 'break'
+  discard scan.next()
+  result = Node(kind: nkBreak)
 
+proc parseContinue(): Node {.rule.} =
+  ## Parses a continue statement.
+  # continue <- 'continue'
+  discard scan.next()
+  result = Node(kind: nkContinue)
 
 proc parseStmt(): Node {.rule.} =
+  ## Parses a statement.
+  # stmt <- block | var | object | proc | while | break | continue | expr
   result =
     case scan.peek().kind
     of tokLBrace: parseBlock(scan)
     of tokVar, tokLet: parseVar(scan)
     of tokObject: parseObject(scan)
     of tokWhile: parseWhile(scan)
-    of tokBreak: Node(kind: nkBreak)
-    of tokContinue: Node(kind: nkContinue)
+    of tokBreak: parseBreak(scan)
+    of tokContinue: parseContinue(scan)
     else: parseExpr(scan)
 
 proc parseBlock(): Node {.rule.} =
+  ## Parses a block.
+  # block <- '{' *(stmt '\n') ?stmt '}'
   scan.expect(tokLBrace)
   var stmts: seq[Node]
   while scan.peek().kind != tokRBrace:
@@ -313,9 +359,12 @@ proc parseBlock(): Node {.rule.} =
   result = Node(kind: nkBlock, children: stmts)
 
 proc parseScript*(): Node {.rule.} =
+  ## Parses a script.
+  # script <- *(stmt '\n') ?stmt
   var stmts: seq[Node]
   while not scan.atEnd:
     stmts.add(parseStmt(scan))
     if not scan.linefeed():
       scan.error("Line feed expected after statement")
   result = Node(kind: nkScript, children: stmts)
+

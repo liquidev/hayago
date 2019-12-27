@@ -23,6 +23,7 @@ template dumpTokens(input: string) =
       break
 
 template compile(input: string) =
+  dumpTokens(input)
   benchmark("compilation"):
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
@@ -31,10 +32,9 @@ template compile(input: string) =
       chunk = initChunk()
       cp = initCodeGen(module, chunk)
     cp.genScript(ast)
-  dumpTokens(input)
   echo ast
   echo module
-  echo chunk.disassemble()
+  echo chunk.disassemble(input)
 
 suite "compiler":
   test "variables":
@@ -90,6 +90,15 @@ suite "compiler":
       stop = false
     while x < 10 and not stop {
 
+    }
+    """)
+    compile("""
+    var x = 0
+    while true {
+      x = x + 1
+      if x == 10 {
+        break
+      }
     }
     """)
   test "objects":

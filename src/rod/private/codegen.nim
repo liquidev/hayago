@@ -14,7 +14,7 @@ import parser
 import value
 
 type
-  Loop = object
+  Loop = ref object
     before: int
     breaks: seq[int]
     bottomScope: int
@@ -447,7 +447,8 @@ proc genWhile(node: Node) {.codegen.} =
     afterLoop: int # a hole pointer to the end of the loop
   let beforeLoop = gen.chunk.code.len
   # begin a new loop
-  gen.loops.add(Loop(before: beforeLoop))
+  gen.loops.add(Loop(before: beforeLoop,
+                     bottomScope: gen.scopes.len))
   if node[0].kind == nkBool: # if the condition is a bool literal
     if node[0].boolVal == true: isWhileTrue = true # while true is optimized
     else: return # while false is a noop
@@ -480,26 +481,31 @@ proc genBreak(node: Node) {.codegen.} =
   ## Generate code for a ``break`` statement.
   if gen.loops.len < 1:
     node.error("'break' can only be used in a loop")
+  let loop = gen.loops[^1]
   # discard the loop's variables
-  # XXX: there's a bug here; if break is used inside a block nested in the loop,
-  # the variables from the block are not discarded!
+  var varCount = 0
+  for scope in gen.scopes[loop.bottomScope..^1]:
+    inc(varCount, scope.varCount)
   gen.chunk.emit(opcDiscard)
-  gen.chunk.emit(gen.currentScope.varCount.uint8)
+  gen.chunk.emit(varCount.uint8)
   # jump past the loop
   gen.chunk.emit(opcJumpFwd)
-  gen.loops[^1].breaks.add(gen.chunk.emitHole(2))
+  loop.breaks.add(gen.chunk.emitHole(2))
 
 proc genContinue(node: Node) {.codegen.} =
   ## Generate code for a ``continue`` statement.
   if gen.loops.len < 1:
     node.error("'continue' can only be used in a loop")
+  let loop = gen.loops[^1]
   # discard the loop's variables
-  # XXX: there's a bug here; see comments in genBreak
+  var varCount = 0
+  for scope in gen.scopes[loop.bottomScope..^1]:
+    inc(varCount, scope.varCount)
   gen.chunk.emit(opcDiscard)
-  gen.chunk.emit(gen.currentScope.varCount.uint8)
+  gen.chunk.emit(varCount.uint8)
   # jump back to the condition
   gen.chunk.emit(opcJumpBack)
-  gen.chunk.emit(uint16(gen.chunk.code.len - gen.loops[^1].before))
+  gen.chunk.emit(uint16(gen.chunk.code.len - loop.before))
 
 proc genObject(node: Node) {.codegen.} =
   ## Process an object declaration, and add the new type into the current
