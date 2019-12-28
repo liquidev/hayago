@@ -110,7 +110,7 @@ var a, b = 2
 var c, d: string
 // using let:
 let x, y = 5
-// let z, w: bool - error: `let` variables must have a value.
+// let z, w: bool - error: 'let' variables must have a value.
 ```
 The rules behind these two definition types are the same as in Nim: `var`
 declares a regular variable, and `let` declares a single-assignment variable.
