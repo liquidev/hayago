@@ -142,7 +142,7 @@ and `for`.
 ### `if` expression
 
 In rod, `if` is an expression. That means it can be used in places like variable
-values, proc parameters, etc.
+values, proc arguments, etc.
 
 The basic syntax of an `if` expression is like so:
 ```rod
@@ -162,6 +162,23 @@ raised.
 An `if` expression executes all of its blocks sequentially, and stops whenever
 one of the condition evaluates to `true`. If none of the expressions evaluate to
 `true`, then the `else` branch is executed.
+
+Here's an example of the `if` expression in action:
+```rod
+let respHi = 0
+let respBye = 1
+let respNone = 2
+
+let in = readInputFromUser()
+var response = respNone
+
+if in == "hi" { response = respHi }
+elif in == "bye" { response = respBye }
+
+echo(if response == respHi { "Hello!" }
+     elif response == respBye { "Goodbye!" }
+     else { "..." })
+```
 
 The type of an `if` expression is inferred by the following conditions:
 
