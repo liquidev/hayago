@@ -17,30 +17,31 @@ type
     # building blocks
     nkEmpty      # empty node
     nkScript     # full script
-    nkBlock      # a block
-    nkIdentDefs  # identifier definitions
+    nkBlock      # a block - {...}
+    nkIdentDefs  # identifier definitions - a, b: s = x
     # literals
     nkBool       # bool literal
     nkNumber     # number literal
     nkString     # string literal
     nkIdent      # identifier
     # expressions
-    nkPrefix     # prefix operator
-    nkInfix      # infix operator
-    nkDot        # dot expression
-    nkIndex      # index expression
-    nkCall       # call
-    nkIf         # if expression
+    nkPrefix     # prefix operator - op expr
+    nkInfix      # infix operator - left op right
+    nkDot        # dot expression - left.right
+    nkColon      # colon expression - left: right
+    nkIndex      # index expression - left[a, ...]
+    nkCall       # call - left(a, ...)
+    nkIf         # if expression - if expr {...} elif expr {...} else {...}
     # statements
-    nkVar        # var declaration
-    nkLet        # let declaration
-    nkWhile      # while loop
-    nkFor        # for loop
-    nkBreak      # break statement
-    nkContinue   # continue statement
+    nkVar        # var declaration - var a = x
+    nkLet        # let declaration - let a = x
+    nkWhile      # while loop - while cond {...}
+    nkFor        # for loop - for x in y {...}
+    nkBreak      # break statement - break
+    nkContinue   # continue statement - continue
     # declarations
-    nkObject     # object declaration
-    nkProc       # procedure declaration
+    nkObject     # object declaration - object name[T, ...] {...}
+    nkProc       # procedure declaration - proc name(a: s, ...) -> t {...}
   Node* = ref object ## An AST node.
     ln*, col*: int ## Line information used for compile errors
     file*: string
@@ -153,12 +154,17 @@ macro rule(pc) =
     pc[6] = newCall("ruleGuard", newStmtList(pc[6]))
   result = pc
 
+const
+  PrecColon = 10
+  PrecCall = 11
+
 proc precedence(token: Token): int =
   ## Returns the infix precedence of a token.
   result =
     case token.kind
     of tokOperator: token.prec
-    of tokLBrk, tokDot, tokLPar: 10
+    of tokColon: PrecColon
+    of tokLBrk, tokDot, tokLPar: PrecCall
     else: 0
 
 proc parseExpr(prec = 0): Node {.rule.}
@@ -218,13 +224,15 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
       result = scan.newTree(nkInfix, scan.newIdent(token.operator),
                             left, parseExpr(scan, token.prec))
   of tokLBrk: # index operator '[]'
-    result = scan.newTree(nkIndex, left, parseExpr(scan, 10))
+    result = scan.newTree(nkIndex, left, parseExpr(scan, prec = PrecCall))
     while scan.peek().kind == tokComma:
       discard scan.next()
-      result.add(parseExpr(scan, 10))
+      result.add(parseExpr(scan, prec = PrecCall))
     scan.expect(tokRBrk)
   of tokDot: # dot operator '.'
-    result = scan.newTree(nkDot, left, parseExpr(scan, 10))
+    result = scan.newTree(nkDot, left, parseExpr(scan, prec = PrecCall))
+  of tokColon: # colon expression
+    result = scan.newTree(nkColon, left, parseExpr(scan, prec = PrecColon))
   of tokLPar: # call or object constructor
     result = scan.newNode(nkCall)
     echo scan.peek
