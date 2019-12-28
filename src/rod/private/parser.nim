@@ -4,71 +4,135 @@
 # licensed under the MIT license
 #--
 
-## The parser. Rules are commented with npeg-like syntax.
+# Parser procs (``parse*``) are annotated with pseudo-npeg rules.
 
 import macros
+import strformat
 import strutils
 
 import scanner
 
 type
   NodeKind* = enum
-    nkEmpty
-    nkScript, nkBlock
-    nkBool, nkNumber, nkString, nkIdent
-    nkPrefix, nkInfix, nkDot, nkIndex
-    nkVar, nkLet
-    nkIf, nkWhile, nkFor
-    nkBreak, nkContinue
-    nkCall
-    nkGeneric
-    nkObject, nkObjFields, nkObjConstr
-    nkProc
-  Node* = ref object
-    ln*, col*: int
+    # building blocks
+    nkEmpty      # empty node
+    nkScript     # full script
+    nkBlock      # a block
+    nkIdentDefs  # identifier definitions
+    # literals
+    nkBool       # bool literal
+    nkNumber     # number literal
+    nkString     # string literal
+    nkIdent      # identifier
+    # expressions
+    nkPrefix     # prefix operator
+    nkInfix      # infix operator
+    nkDot        # dot expression
+    nkIndex      # index expression
+    nkCall       # call
+    nkIf         # if expression
+    # statements
+    nkVar        # var declaration
+    nkLet        # let declaration
+    nkWhile      # while loop
+    nkFor        # for loop
+    nkBreak      # break statement
+    nkContinue   # continue statement
+    # declarations
+    nkObject     # object declaration
+    nkProc       # procedure declaration
+  Node* = ref object ## An AST node.
+    ln*, col*: int ## Line information used for compile errors
     file*: string
-    case kind*: NodeKind
-    of nkEmpty: discard
-    of nkBool:
+    case kind*: NodeKind ## The kind of the node
+    of nkEmpty: ## Empty node
+      discard
+    of nkBool: ## Bool literal
       boolVal*: bool
-    of nkNumber:
+    of nkNumber: ## Number literal
       numberVal*: float
-    of nkString:
+    of nkString: ## String literal
       stringVal*: string
-    of nkIdent:
+    of nkIdent: ## Identifier (may get merged with nkString)
       ident*: string
-    else:
+    else: ## Any other branch nodes
       children*: seq[Node]
 
 const LeafNodes = {
-  nkEmpty, nkBool, nkNumber, nkString, nkIdent, nkPrefix, nkInfix
+  nkEmpty, nkBool, nkNumber, nkString, nkIdent
 }
 
-proc `[]`*(node: Node, index: int): Node =
+proc `[]`*(node: Node, index: int | BackwardsIndex): Node =
   result = node.children[index]
 
-proc `$`*(node: Node, showLineInfo = false): string =
+proc add*(node, child: Node): Node {.discardable.} =
+  node.children.add(child)
+  result = node
+
+proc add*(node: Node, children: openarray[Node]): Node {.discardable.} =
+  node.children.add(children)
+  result = node
+
+proc `$`*(node: Node): string =
   ## Stringify a node into a lisp representation.
   case node.kind
-  of nkEmpty: result = "<empty>"
-  of nkBool: result = $node.boolVal
-  of nkNumber: result = $node.numberVal
-  of nkString: result = escape(node.stringVal)
-  of nkIdent: result = node.ident
+  of nkEmpty: result = "Empty"
+  of nkBool: result = "Bool " & $node.boolVal
+  of nkNumber: result = "Number " & $node.numberVal
+  of nkString: result = "String " & escape(node.stringVal)
+  of nkIdent: result = "Ident " & node.ident
   else:
-    result = (if showLineInfo: $node.ln & ":" & $node.col & " " else: "") &
-             "(" & (case node.kind
-                    of nkPrefix, nkInfix: ""
-                    else: $node.kind & " ")
+    result = ($node.kind)[2..^1]
+    var children = ""
     for i, child in node.children:
-      if child.kind notin LeafNodes and node.children.len > 1:
-        result.add("\n")
-        result.add(indent(`$`(child, showLineInfo), 2))
-      else:
-        if i > 0:
-          result.add(" ")
-        result.add(`$`(child, showLineInfo))
-    result.add(")")
+      children.add('\n' & $child)
+    result.add(children.indent(2))
+
+proc newNode*(scan: Scanner, kind: NodeKind): Node =
+  ## Construct a new node.
+  result = Node(kind: kind,
+                ln: scan.ln, col: scan.col,
+                file: scan.file)
+
+proc newEmpty*(scan: Scanner): Node =
+  ## Construct a new empty node.
+  result = scan.newNode(nkEmpty)
+
+proc newBlock*(scan: Scanner, children: varargs[Node]): Node =
+  ## Construct a new block.
+  result = scan.newNode(nkBlock)
+
+proc newTree*(scan: Scanner, kind: NodeKind, children: varargs[Node]): Node =
+  ## Construct a new branch node with the given kind.
+  assert kind notin LeafNodes, "kind must denote a branch node"
+  result = scan.newNode(kind)
+  result.add(children)
+
+proc newBoolLit*(scan: Scanner, val: bool): Node =
+  ## Construct a new bool literal.
+  result = scan.newNode(nkBool)
+  result.boolVal = val
+
+proc newNumberLit*(scan: Scanner, val: float): Node =
+  ## Construct a new number literal.
+  result = scan.newNode(nkNumber)
+  result.numberVal = val
+
+proc newStringLit*(scan: Scanner, val: string): Node =
+  ## Construct a new string literal.
+  result = scan.newNode(nkString)
+  result.stringVal = val
+
+proc newIdent*(scan: Scanner, ident: string): Node =
+  ## Construct a new ident node.
+  result = scan.newNode(nkIdent)
+  result.ident = ident
+
+proc newIdentDefs*(scan: Scanner, names: openarray[Node], ty: Node,
+                   value = scan.newEmpty()): Node =
+  ## Construct a new nkIdentDefs node.
+  result = scan.newTree(nkIdentDefs, names)
+  result.add([ty, value])
 
 template ruleGuard(body) =
   ## Helper used by {.rule.} to update line info appropriately for nodes.
@@ -84,7 +148,7 @@ macro rule(pc) =
   ## Adds a ``scan`` parameter to a proc and wraps its body in a call to
   ## ``ruleGuard``.
   pc[3].insert(1,
-    newIdentDefs(ident"scan", newNimNode(nnkVarTy).add(ident"Scanner")))
+    newIdentDefs(ident"scan", newTree(nnkVarTy, ident"Scanner")))
   if pc[6].kind != nnkEmpty:
     pc[6] = newCall("ruleGuard", newStmtList(pc[6]))
   result = pc
@@ -124,60 +188,20 @@ proc parseIf(): Node {.rule.} =
   if scan.peek().kind == tokElse:
     discard scan.next()
     children.add(parseBlock(scan))
-  result = Node(kind: nkIf, children: children)
-
-# XXX: This is a pretty bad solution as it requires two different procs to be
-# changed if something changes in the codebase
-proc parseType(): Node {.rule.} =
-  ## Parses a type.
-  # type <- Ident ?('[' commaList(type) ']')
-  let tok = scan.next()
-  case tok.kind
-  of tokIdent:
-    result = Node(kind: nkIdent, ident: tok.ident)
-  else:
-    scan.error("Type expected")
-  if scan.peek().kind == tokLBrk:
-    discard scan.next()
-    var gParams = @[result]
-    while true:
-      if scan.atEnd:
-        scan.error("Right bracket ']' expected")
-      gParams.add(parseType(scan))
-      let next = scan.next()
-      case next.kind
-      of tokComma: continue
-      of tokRBrk: break
-      else:
-        scan.error("Comma ',' or right bracket ']' expected")
-    result = Node(kind: nkGeneric, children: gParams)
-
-proc intoType(typeExpr: Node): Node {.rule.} =
-  ## Converts an expression into a type.
-  if typeExpr.kind == nkIdent:
-    result = typeExpr
-  elif typeExpr.kind == nkIndex:
-    if typeExpr[0].kind != nkIdent:
-      scan.error("Generic type must begin with type name")
-    var params: seq[Node]
-    for n in typeExpr.children:
-      params.add(intoType(scan, n))
-    result = Node(kind: nkGeneric, children: params)
+  result = scan.newTree(nkIf, children)
 
 proc parsePrefix(token: Token): Node {.rule.} =
   ## Parses a prefix expression.
   # prefix <- 'true' | 'false' | Number | String | Ident |
   #           Operator prefix | parExpr | if
   case token.kind
-  of tokTrue: result = Node(kind: nkBool, boolVal: true)
-  of tokFalse: result = Node(kind: nkBool, boolVal: false)
-  of tokNumber: result = Node(kind: nkNumber, numberVal: token.numberVal)
-  of tokString: result = Node(kind: nkString, stringVal: token.stringVal)
-  of tokIdent: result = Node(kind: nkIdent, ident: token.ident)
-  of tokOperator: result = Node(kind: nkPrefix,
-                                children: @[Node(kind: nkIdent,
-                                                 ident: token.operator),
-                                            parsePrefix(scan, scan.next())])
+  of tokTrue: result = scan.newBoolLit(true)
+  of tokFalse: result = scan.newBoolLit(false)
+  of tokNumber: result = scan.newNumberLit(token.numberVal)
+  of tokString: result = scan.newStringLit(token.stringVal)
+  of tokIdent: result = scan.newIdent(token.ident)
+  of tokOperator: result = scan.newTree(nkPrefix, scan.newIdent(token.operator),
+                                        parsePrefix(scan, scan.next()))
   of tokLPar: result = parseParExpr(scan)
   of tokIf: result = parseIf(scan)
   else: scan.error("Unexpected token: " & $token.kind)
@@ -191,47 +215,36 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
   case token.kind
   of tokOperator: # Binary operator
     if token.operator notin ["not", "->", "$"]:
-      result = Node(kind: nkInfix,
-                    children: @[Node(kind: nkIdent, ident: token.operator),
-                                left, parseExpr(scan, token.prec)])
-  of tokLBrk: # Index operator '[]'
-    result = Node(kind: nkIndex,
-                  children: @[left, parseExpr(scan, 10)])
+      result = scan.newTree(nkInfix, scan.newIdent(token.operator),
+                            left, parseExpr(scan, token.prec))
+  of tokLBrk: # index operator '[]'
+    result = scan.newTree(nkIndex, left, parseExpr(scan, 10))
     while scan.peek().kind == tokComma:
       discard scan.next()
-      result.children.add(parseExpr(scan, 10))
+      result.add(parseExpr(scan, 10))
     scan.expect(tokRBrk)
-  of tokDot: # Dot operator '.'
-    result = Node(kind: nkDot,
-                  children: @[left, parseExpr(scan, 10)])
-  of tokLPar: # Call or object constructor
-    if scan.pattern([tokIdent, tokColon]):
-      # Object constructor
-      var fields = @[intoType(scan, left)]
-      while true:
-        if scan.atEnd:
-          scan.error("Missing right paren ')'")
-        let field = scan.expect(tokIdent, "Field name expected")
-        scan.expect(tokColon, "Colon ':' expected")
-        let value = parseExpr(scan)
-        fields.add(Node(kind: nkObjFields, children:
-                          @[Node(kind: nkIdent, ident: field.ident),
-                            value]))
-        let next = scan.next().kind
-        case next
-        of tokComma: continue
-        of tokRPar: break
-        else:
-          scan.error("Comma ',' or right paren ')' expected")
-      result = Node(kind: nkObjConstr, children: fields)
-    else:
-      # Call (TODO)
-      discard
+  of tokDot: # dot operator '.'
+    result = scan.newTree(nkDot, left, parseExpr(scan, 10))
+  of tokLPar: # call or object constructor
+    result = scan.newNode(nkCall)
+    echo scan.peek
+    while true:
+      if scan.atEnd:
+        scan.error("Missing right paren ')'")
+      let val = parseExpr(scan)
+      result.add(val)
+      let next = scan.next().kind
+      case next
+      of tokComma: continue
+      of tokRPar: break
+      else:
+        scan.error("Comma ',' or right paren ')' expected")
   else: scan.error("Unexpected token: " & $token.kind)
 
 proc parseExpr(prec = 0): Node {.rule.} =
   ## Parses an expression.
   # expr <- prefix *infix
+  # expr(x) parses infix expressions of precedence > x
   var token = scan.next()
   result = parsePrefix(scan, token)
   if result == nil:
@@ -242,26 +255,45 @@ proc parseExpr(prec = 0): Node {.rule.} =
       break
     result = parseInfix(scan, result, token)
 
+proc parseIdentDefs(): Node {.rule.} =
+  ## Parses identifier definitions.
+  # identDefs <- Ident *(',' Ident) (':' expr(9) | '=' expr |
+  #                                  ':' expr(9) '=' expr)
+  result = scan.newNode(nkIdentDefs)
+  var delim: Token
+  while true:
+    let
+      identTok = scan.expect(tokIdent)
+      identNode = scan.newIdent(identTok.ident)
+    result.add(identNode)
+    delim = scan.next()
+    case delim.kind
+    of tokComma: continue
+    of tokColon, tokOperator: break
+    else:
+      scan.error("Comma ',', colon ':', or assignment '=' expected")
+  if delim.kind == tokOperator and delim.operator != "=":
+    scan.error(fmt"Assignment operator '=' expected, got '{delim.ident}'")
+  var
+    ty = scan.newEmpty()
+    value = scan.newEmpty()
+  case delim.kind
+  of tokColon:
+    ty = parseExpr(scan, prec = 9)
+  of tokOperator:
+    value = parseExpr(scan)
+  else: assert false, "unreachable"
+  if delim.kind == tokColon and scan.peek().kind == tokOperator:
+    scan.expectOp("=")
+    value = parseExpr(scan)
+  result.add([ty, value])
+
 proc parseVar(): Node {.rule.} =
   ## Parses a variable declaration.
-  # var <- ('var' | 'let') Ident ?(':' expr(prec > 9)) '=' expr
-  result = Node(kind: if scan.next().kind == tokVar: nkVar
-                      else: nkLet)
-  while true:
-    let name = scan.expect(tokIdent)
-    var ty = Node(kind: nkEmpty)
-    if scan.peek().kind == tokColon:
-      discard scan.next()
-      ty = parseType(scan)
-    scan.expectOp("=")
-    let val = scan.parseExpr()
-    result.children.add(Node(kind: nkInfix, children: @[
-                          Node(kind: nkIdent, ident: "="),
-                          Node(kind: nkIdent, ident: name.ident), val, ty]))
-    if scan.peek().kind == tokComma:
-      discard scan.next()
-      continue
-    break
+  # var <- ('var' | 'let') Ident ?(':' expr(9)) '=' expr
+  result = scan.newNode(if scan.next().kind == tokVar: nkVar
+                        else: nkLet)
+  result.add(parseIdentDefs(scan))
   if result.children.len < 1:
     scan.error("Variable declaration expected")
 
@@ -272,49 +304,37 @@ proc parseWhile(): Node {.rule.} =
   let
     cond = parseExpr(scan)
     body = parseBlock(scan)
-  result = Node(kind: nkWhile, children: @[cond, body])
+  result = scan.newTree(nkWhile, cond, body)
 
 proc parseObject(): Node {.rule.} =
   ## Parses an object declaration.
   # identDefs <- commaList(Ident) ':' type
   # object <- 'object' type '{' *identDefs '}'
   discard scan.next()
-  let name = parseType(scan)
+  let name = parseExpr(scan, prec = 9)
   scan.expect(tokLBrace)
   var fields: seq[Node]
   fields.add(name)
   while scan.peek().kind != tokRBrace:
     if scan.atEnd:
       scan.error("Missing right brace '}'")
-    if scan.peek().kind != tokIdent:
-      scan.error("Field name expected")
-    var fieldNames: seq[Node]
-    while scan.peek().kind == tokIdent:
-      fieldNames.add(Node(kind: nkIdent, ident: scan.next().ident))
-      var nextTok = scan.next().kind
-      case nextTok
-      of tokComma: continue
-      of tokColon: break
-      else: scan.error("Comma ',' or colon ':' expected")
-    var ty = parseType(scan)
-    fieldNames.add(ty)
-    fields.add(Node(kind: nkObjFields, children: fieldNames))
+    fields.add(parseIdentDefs(scan))
     if not scan.linefeed() and scan.peek().kind != tokRBrace:
       scan.error("Line feed expected after object field")
   discard scan.next()
-  result = Node(kind: nkObject, children: fields)
+  result = scan.newTree(nkObject, fields)
 
 proc parseBreak(): Node {.rule.} =
   ## Parses a break statement.
   # break <- 'break'
   discard scan.next()
-  result = Node(kind: nkBreak)
+  result = scan.newNode(nkBreak)
 
 proc parseContinue(): Node {.rule.} =
   ## Parses a continue statement.
   # continue <- 'continue'
   discard scan.next()
-  result = Node(kind: nkContinue)
+  result = scan.newNode(nkContinue)
 
 proc parseStmt(): Node {.rule.} =
   ## Parses a statement.
@@ -341,7 +361,7 @@ proc parseBlock(): Node {.rule.} =
     if not scan.linefeed() and scan.peek().kind != tokRBrace:
       scan.error("Line feed expected after statement")
   discard scan.next()
-  result = Node(kind: nkBlock, children: stmts)
+  result = scan.newTree(nkBlock, stmts)
 
 proc parseScript*(): Node {.rule.} =
   ## Parses a script.
@@ -351,5 +371,5 @@ proc parseScript*(): Node {.rule.} =
     stmts.add(parseStmt(scan))
     if not scan.linefeed():
       scan.error("Line feed expected after statement")
-  result = Node(kind: nkScript, children: stmts)
+  result = scan.newTree(nkScript, stmts)
 

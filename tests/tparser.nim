@@ -11,8 +11,8 @@ suite "parser":
   test "expressions":
     parse(r"2 * 2 + 2")
   test "statements":
-    parse(r"var x = 2, y = 3, z = 4")
-    parse(r"let x = 3, y = 4, z = 5")
+    parse(r"var x, y, z = 2")
+    parse(r"let x, y: number")
   test "blocks":
     parse("""
       { var x = 4
@@ -20,7 +20,8 @@ suite "parser":
     """)
   test "scripts":
     parse("""
-      var x = 2, y = 3
+      var x = 2
+      var y: number
       { var z = 4 }
     """)
   test "if expressions":
@@ -50,6 +51,15 @@ suite "parser":
     """)
     parse("""
       var myVec = Vec2(x: 10, y: 20)
+    """)
+  test "procs":
+    parse("""
+      someProc("testing")
+    """)
+    parse("""
+      proc hello(a: string) -> string {
+        echo("hello, " & a)
+      }
     """)
   test "indexing":
     parse("""

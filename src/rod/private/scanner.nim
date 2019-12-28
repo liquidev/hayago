@@ -95,8 +95,8 @@ const IdentChars = strutils.IdentChars + Utf8Chars
 
 proc error*(scan: Scanner, msg: string) =
   raise (ref RodError)(kind: reSyntax,
-                       msg: scan.file & " " & $scan.ln & ":" & $scan.col &
-                            " " & msg,
+                       msg: scan.file & "(" & $scan.ln & ", " & $scan.col &
+                            "): " & msg,
                        ln: scan.ln, col: scan.col)
 
 proc atEnd*(scan: Scanner): bool =
@@ -246,8 +246,10 @@ proc expect*(scan: var Scanner, kind: TokenKind,
              customError = ""): Token {.discardable.} =
   result = scan.next()
   if result.kind != kind:
-    scan.error((if customError == "": $kind else: customError) &
-               " expected, got " & $result.kind)
+    if customError.len == 0:
+      scan.error($kind & " expected, got " & $result.kind)
+    else:
+      scan.error(customError)
 
 proc expectOp*(scan: var Scanner, op: string) =
   let tok = scan.next()
@@ -261,7 +263,8 @@ proc pattern*(scan: var Scanner, patt: openarray[TokenKind]): bool =
     col = scan.col
   for tk in patt:
     if scan.next().kind != tk:
-      return false
+      result = false
+      break
   scan.pos = pos
   scan.ln = ln
   scan.col = col
