@@ -210,6 +210,7 @@ proc parseType(): Node {.rule.} =
   ## Parses a type.
   # type <- expr(9) | anonProcHead
   if scan.peek().kind == tokProc:
+    discard scan.next()
     var name, params: Node
     parseProcHead(scan, anon = true, name, params)
     result = scan.newTree(nkProcTy, params)
@@ -249,9 +250,9 @@ proc parseIdentDefs(): Node {.rule.} =
     value = parseExpr(scan)
   result.add([ty, value])
 
-proc parseCommaList*(scan: var Scanner, start, term: static TokenKind,
-                     results: var seq[Node],
-                     rule: proc (scan: var Scanner): Node): bool =
+proc parseCommaList(scan: var Scanner, start, term: static TokenKind,
+                    results: var seq[Node],
+                    rule: proc (scan: var Scanner): Node): bool =
   ## Parses a comma-separated list.
   # commaList(s, t, rule) <- s ?rule *(',' rule) t
   if scan.peek().kind == start:
@@ -269,14 +270,15 @@ proc parseCommaList*(scan: var Scanner, start, term: static TokenKind,
       scan.error("',' or '{term}' expected")
   result = true
 
-proc parseProcHead*(anon: bool, name, formalParams: var Node) {.rule.} =
+proc parseProcHead(anon: bool, name, formalParams: var Node) {.rule.} =
   ## Parse a procedure header.
-  # anonProcHead <- 'proc' '(' identDefs ')' -> type
-  # procHead <- 'proc' Ident '(' identDefs ')' -> type
-  scan.expect(tokProc)
+  # anonProcHead <- commaList('(', ')', identDefs) -> type
+  # procHead <- Ident commaList('(', ')', identDefs) -> type
   if not anon:
     let ident = scan.expect(tokIdent, "Proc name expected")
     name = scan.newIdent(ident.ident)
+  else:
+    name = scan.newEmpty()
   formalParams = scan.newTree(nkFormalParams, scan.newEmpty())
   if scan.peek().kind == tokLPar:
     var params: seq[Node]
@@ -286,6 +288,17 @@ proc parseProcHead*(anon: bool, name, formalParams: var Node) {.rule.} =
   if scan.peek().kind == tokOperator and scan.peek().operator == "->":
     discard scan.next()
     formalParams[0] = parseType(scan)
+
+proc parseProc(anon: bool): Node {.rule.} =
+  ## Parse a procedure or anonymous procedure.
+  # anonProc <- anonProcHead block
+  # proc <- procHead block
+  var name, formalParams: Node
+  parseProcHead(scan, anon, name, formalParams)
+  let body = parseBlock(scan)
+  result = scan.newTree(nkProc, name,
+                        scan.newEmpty(), # reserved for generic params
+                        formalParams, body)
 
 proc parsePrefix(token: Token): Node {.rule.} =
   ## Parses a prefix expression.
@@ -301,6 +314,7 @@ proc parsePrefix(token: Token): Node {.rule.} =
                                         parsePrefix(scan, scan.next()))
   of tokLPar: result = parseParExpr(scan)
   of tokIf: result = parseIf(scan)
+  of tokProc: result = parseProc(scan, anon = true)
   else: scan.error("Unexpected token: " & $token.kind)
 
 proc parseInfix(left: Node, token: Token): Node {.rule.} =
@@ -408,6 +422,7 @@ proc parseStmt(): Node {.rule.} =
     case scan.peek().kind
     of tokLBrace: parseBlock(scan)
     of tokVar, tokLet: parseVar(scan)
+    of tokProc: discard scan.next(); parseProc(scan, anon = false)
     of tokObject: parseObject(scan)
     of tokWhile: parseWhile(scan)
     of tokBreak: parseBreak(scan)

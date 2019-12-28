@@ -64,6 +64,11 @@ suite "parser":
         echo("hello, " & a)
       }
     """)
+    parse("""
+      onPrint(proc (text: string) {
+        echo(text)
+      })
+    """)
   test "indexing":
     parse("""
       var x = a[2]
