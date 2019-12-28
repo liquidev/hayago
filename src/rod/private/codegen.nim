@@ -96,7 +96,7 @@ proc lookup(gen: CodeGen, name: Node): Sym =
   if name.ident in gen.module.syms:
     # try to find a global symbol
     return gen.module.syms[name.ident]
-  name.error(fmt"Attempt to reference undeclared symbol '{name.ident}'")
+  name.error(fmt"'{name.ident}' is not declared in the current scope")
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -304,7 +304,7 @@ proc infix(node: Node): Sym {.codegen.} =
       result = gen.module.sym"bool"
     else: discard
 
-proc objConstr(node: Node): Sym {.codegen.} =
+proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   ## Generate code for an object constructor.
   result = gen.lookup(node[0]) # find the object type that's being constructed
   if result.tyKind != tkObject:
@@ -335,6 +335,16 @@ proc objConstr(node: Node): Sym {.codegen.} =
   # construct the object
   gen.chunk.emit(opcConstrObj)
   gen.chunk.emit(uint8(fields.len))
+
+proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
+  discard
+
+proc call(node: Node): Sym {.codegen.} =
+  ## Generates code for a nkCall (proc call or object constructor).
+  let sym = gen.lookup(node[0])
+  if sym.kind == skType:
+    # object construction
+    result = gen.objConstr(node, sym)
 
 proc genGetField(node: Node): Sym {.codegen.} =
   ## Generate code for field access.
@@ -434,8 +444,8 @@ proc genExpr(node: Node): Sym {.codegen.} =
     result = gen.infix(node)
   of nkDot: # field access
     result = gen.genGetField(node)
-  of nkObjConstr: # object construction
-    result = gen.objConstr(node)
+  of nkCall: # calls and object construction
+    result = gen.call(node)
   of nkIf: # if expressions
     result = gen.genIf(node, isStmt = false)
   else: node.error("Value does not have a valid type")

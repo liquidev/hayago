@@ -87,6 +87,7 @@ type
     of skProc:
       procId*: int ## The unique number of the proc.
       procParams*: seq[ProcParam] ## The proc's parameters.
+      procReturnTy*: Sym ## The return type of the proc.
       procChunk*: Chunk ## The chunk of the proc.
   ObjectField* = tuple
     id: int

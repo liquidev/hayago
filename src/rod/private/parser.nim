@@ -15,33 +15,36 @@ import scanner
 type
   NodeKind* = enum
     # building blocks
-    nkEmpty      # empty node
-    nkScript     # full script
-    nkBlock      # a block - {...}
-    nkIdentDefs  # identifier definitions - a, b: s = x
+    nkEmpty        # empty node
+    nkScript       # full script
+    nkBlock        # a block - {...}
+    nkIdentDefs    # identifier definitions - a, b: s = x
+    nkFormalParams # formal params - (a: s, ...) -> t
     # literals
-    nkBool       # bool literal
-    nkNumber     # number literal
-    nkString     # string literal
-    nkIdent      # identifier
+    nkBool         # bool literal
+    nkNumber       # number literal
+    nkString       # string literal
+    nkIdent        # identifier
     # expressions
-    nkPrefix     # prefix operator - op expr
-    nkInfix      # infix operator - left op right
-    nkDot        # dot expression - left.right
-    nkColon      # colon expression - left: right
-    nkIndex      # index expression - left[a, ...]
-    nkCall       # call - left(a, ...)
-    nkIf         # if expression - if expr {...} elif expr {...} else {...}
+    nkPrefix       # prefix operator - op expr
+    nkInfix        # infix operator - left op right
+    nkDot          # dot expression - left.right
+    nkColon        # colon expression - left: right
+    nkIndex        # index expression - left[a, ...]
+    nkCall         # call - left(a, ...)
+    nkIf           # if expression - if expr {...} elif expr {...} else {...}
+    # types
+    nkProcTy       # procedure type - proc (...) -> t
     # statements
-    nkVar        # var declaration - var a = x
-    nkLet        # let declaration - let a = x
-    nkWhile      # while loop - while cond {...}
-    nkFor        # for loop - for x in y {...}
-    nkBreak      # break statement - break
-    nkContinue   # continue statement - continue
+    nkVar          # var declaration - var a = x
+    nkLet          # let declaration - let a = x
+    nkWhile        # while loop - while cond {...}
+    nkFor          # for loop - for x in y {...}
+    nkBreak        # break statement - break
+    nkContinue     # continue statement - continue
     # declarations
-    nkObject     # object declaration - object name[T, ...] {...}
-    nkProc       # procedure declaration - proc name(a: s, ...) -> t {...}
+    nkObject       # object declaration - object name[T, ...] {...}
+    nkProc         # procedure declaration - proc name(a: s, ...) -> t {...}
   Node* = ref object ## An AST node.
     ln*, col*: int ## Line information used for compile errors
     file*: string
@@ -65,6 +68,9 @@ const LeafNodes = {
 
 proc `[]`*(node: Node, index: int | BackwardsIndex): Node =
   result = node.children[index]
+
+proc `[]=`*(node: Node, index: int | BackwardsIndex, child: Node) =
+  node.children[index] = child
 
 proc add*(node, child: Node): Node {.discardable.} =
   node.children.add(child)
@@ -137,13 +143,15 @@ proc newIdentDefs*(scan: Scanner, names: openarray[Node], ty: Node,
 
 template ruleGuard(body) =
   ## Helper used by {.rule.} to update line info appropriately for nodes.
-  let
-    ln = scan.ln
-    col = scan.col
+  when declared(result):
+    let
+      ln = scan.ln
+      col = scan.col
   body
-  result.ln = ln
-  result.col = col
-  result.file = scan.file
+  when declared(result):
+    result.ln = ln
+    result.col = col
+    result.file = scan.file
 
 macro rule(pc) =
   ## Adds a ``scan`` parameter to a proc and wraps its body in a call to
@@ -196,6 +204,89 @@ proc parseIf(): Node {.rule.} =
     children.add(parseBlock(scan))
   result = scan.newTree(nkIf, children)
 
+proc parseProcHead*(anon: bool, name, formalParams: var Node) {.rule.}
+
+proc parseType(): Node {.rule.} =
+  ## Parses a type.
+  # type <- expr(9) | anonProcHead
+  if scan.peek().kind == tokProc:
+    var name, params: Node
+    parseProcHead(scan, anon = true, name, params)
+    result = scan.newTree(nkProcTy, params)
+  else:
+    result = parseExpr(scan, prec = 9)
+
+proc parseIdentDefs(): Node {.rule.} =
+  ## Parses identifier definitions.
+  # identDefs <- Ident *(',' Ident) (':' expr(9) | '=' expr |
+  #                                  ':' expr(9) '=' expr)
+  result = scan.newNode(nkIdentDefs)
+  var delim: Token
+  while true:
+    let
+      identTok = scan.expect(tokIdent)
+      identNode = scan.newIdent(identTok.ident)
+    result.add(identNode)
+    delim = scan.next()
+    case delim.kind
+    of tokComma: continue
+    of tokColon, tokOperator: break
+    else:
+      scan.error("Comma ',', colon ':', or assignment '=' expected")
+  if delim.kind == tokOperator and delim.operator != "=":
+    scan.error(fmt"Assignment operator '=' expected, got '{delim.ident}'")
+  var
+    ty = scan.newEmpty()
+    value = scan.newEmpty()
+  case delim.kind
+  of tokColon:
+    ty = parseType(scan)
+  of tokOperator:
+    value = parseExpr(scan)
+  else: assert false, "unreachable"
+  if delim.kind == tokColon and scan.peek().kind == tokOperator:
+    scan.expectOp("=")
+    value = parseExpr(scan)
+  result.add([ty, value])
+
+proc parseCommaList*(scan: var Scanner, start, term: static TokenKind,
+                     results: var seq[Node],
+                     rule: proc (scan: var Scanner): Node): bool =
+  ## Parses a comma-separated list.
+  # commaList(s, t, rule) <- s ?rule *(',' rule) t
+  if scan.peek().kind == start:
+    discard scan.next()
+  else:
+    return false
+  while true:
+    if scan.atEnd:
+      scan.error(fmt"Missing '{term}'")
+    results.add(rule(scan))
+    case scan.next().kind
+    of tokComma: continue
+    of term: break
+    else:
+      scan.error("',' or '{term}' expected")
+  result = true
+
+proc parseProcHead*(anon: bool, name, formalParams: var Node) {.rule.} =
+  ## Parse a procedure header.
+  # anonProcHead <- 'proc' '(' identDefs ')' -> type
+  # procHead <- 'proc' Ident '(' identDefs ')' -> type
+  scan.expect(tokProc)
+  if not anon:
+    let ident = scan.expect(tokIdent, "Proc name expected")
+    name = scan.newIdent(ident.ident)
+  formalParams = scan.newTree(nkFormalParams, scan.newEmpty())
+  if scan.peek().kind == tokLPar:
+    var params: seq[Node]
+    if not parseCommaList(scan, tokLPar, tokRPar, params, parseIdentDefs):
+      scan.error("Proc params expected")
+    formalParams.add(params)
+  if scan.peek().kind == tokOperator and scan.peek().operator == "->":
+    discard scan.next()
+    formalParams[0] = parseType(scan)
+
 proc parsePrefix(token: Token): Node {.rule.} =
   ## Parses a prefix expression.
   # prefix <- 'true' | 'false' | Number | String | Ident |
@@ -235,7 +326,6 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
     result = scan.newTree(nkColon, left, parseExpr(scan, prec = PrecColon))
   of tokLPar: # call or object constructor
     result = scan.newNode(nkCall)
-    echo scan.peek
     while true:
       if scan.atEnd:
         scan.error("Missing right paren ')'")
@@ -262,39 +352,6 @@ proc parseExpr(prec = 0): Node {.rule.} =
     if token.kind == tokEnd:
       break
     result = parseInfix(scan, result, token)
-
-proc parseIdentDefs(): Node {.rule.} =
-  ## Parses identifier definitions.
-  # identDefs <- Ident *(',' Ident) (':' expr(9) | '=' expr |
-  #                                  ':' expr(9) '=' expr)
-  result = scan.newNode(nkIdentDefs)
-  var delim: Token
-  while true:
-    let
-      identTok = scan.expect(tokIdent)
-      identNode = scan.newIdent(identTok.ident)
-    result.add(identNode)
-    delim = scan.next()
-    case delim.kind
-    of tokComma: continue
-    of tokColon, tokOperator: break
-    else:
-      scan.error("Comma ',', colon ':', or assignment '=' expected")
-  if delim.kind == tokOperator and delim.operator != "=":
-    scan.error(fmt"Assignment operator '=' expected, got '{delim.ident}'")
-  var
-    ty = scan.newEmpty()
-    value = scan.newEmpty()
-  case delim.kind
-  of tokColon:
-    ty = parseExpr(scan, prec = 9)
-  of tokOperator:
-    value = parseExpr(scan)
-  else: assert false, "unreachable"
-  if delim.kind == tokColon and scan.peek().kind == tokOperator:
-    scan.expectOp("=")
-    value = parseExpr(scan)
-  result.add([ty, value])
 
 proc parseVar(): Node {.rule.} =
   ## Parses a variable declaration.

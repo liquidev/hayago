@@ -57,6 +57,9 @@ suite "parser":
       someProc("testing")
     """)
     parse("""
+      var x: proc (a: string, b, c: number, d: bool) -> bool
+    """)
+    parse("""
       proc hello(a: string) -> string {
         echo("hello, " & a)
       }
