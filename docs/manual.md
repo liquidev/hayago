@@ -105,12 +105,12 @@ can also be used as a statement terminator.
 Variables are a very important part of any language. rod offers two ways of
 declaring them:
 ```rod
-var
-  a = 2,
-  b = 3
-let
-  x = 4,
-  y = 5
+// using var:
+var a, b = 2
+var c, d: string
+// using let:
+let x, y = 5
+// let z, w: bool - error: `let` variables must have a value.
 ```
 The rules behind these two definition types are the same as in Nim: `var`
 declares a regular variable, and `let` declares a single-assignment variable.
