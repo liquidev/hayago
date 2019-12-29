@@ -15,6 +15,7 @@ type
     opcPushTrue = "pushTrue"
     opcPushFalse = "pushFalse"
     opcPushN = "pushN" ## Push number
+    opcPushS = "pushS" ## Push string
     opcPushG = "pushG" ## Push global
     opcPopG = "popG" ## Pop global
     opcPushL = "pushL" ## Push local
@@ -43,61 +44,33 @@ type
     opcJumpFwdT = "jumpFwdT" ## Jump forward if true
     opcJumpFwdF = "jumpFwdF" ## Jump forward if false
     opcJumpBack = "jumpBack" ## Jump backward
+    opcCallD = "callD" ## Call direct
+    opcCallR = "callR" ## Call indirect
     opcHalt = "halt"
 
+  Script* = ref object ## A complete rod script.
+    procs*: seq[Proc] ## The procs declared across all of the script's modules.
+    mainChunk*: Chunk ## The main chunk of this script.
   LineInfo* = tuple ## Line information.
     ln, col: int
     runLength: int
   Chunk* = ref object ## A chunk of bytecode.
-    module*: Module ## The module this chunk belongs to.
+    file*: string ## The filename of the module this chunk belongs to.
     code*: seq[uint8] ## The raw bytecode.
     ln*, col*: int ## The current line info used when emitting bytecode.
     lineInfo: seq[LineInfo] ## A list of run-length encoded line info.
     strings*: seq[string] ## A table of strings used in this chunk.
-
-  Scope* = ref object of RootObj ## A local scope.
-    syms*: Table[string, Sym]
-  Module* = ref object of Scope ## \
-      ## A module representing the global scope of a single source file.
-    name*: string ## The name of the module.
-  SymKind* = enum ## The kind of a symbol.
-    skVar ## A ``var`` variable.
-    skLet ## A ``let`` variable.
-    skType ## A type.
-    skProc ## A proc.
-  TypeKind* = enum ## The kind of a type.
-    tkPrimitive
-    tkObject
-  Sym* = ref object ## A symbol.
-    name*: Node ## The name of the symbol.
-    impl*: Node ## \
-      ## The implementation of the symbol. May be ``nil`` if the 
-      ## symbol is generated.
-    case kind*: SymKind
-    of skVar, skLet:
-      varTy*: Sym ## The type of the variable. 
-      varSet*: bool ## Is the variable set?
-      varLocal*: bool ## Is the variable local?
-      varStackPos*: int ## The position of a local variable on the stack.
-    of skType:
-      case tyKind*: TypeKind
-      of tkPrimitive: discard
-      of tkObject:
-        objFields*: Table[string, ObjectField]
-    of skProc:
-      procId*: int ## The unique number of the proc.
-      procParams*: seq[ProcParam] ## The proc's parameters.
-      procReturnTy*: Sym ## The return type of the proc.
-      procChunk*: Chunk ## The chunk of the proc.
-  ObjectField* = tuple
-    id: int
-    name: Node
-    ty: Sym
-  ProcParam* = tuple ## A single param of a proc.
-    name: Node
-    ty: Sym
-
-const skVars* = {skVar, skLet}
+  ProcKind* = enum
+    pkNative ## A native (bytecode) proc
+    pkForeign ## A foreign (Nim) proc
+  Proc* = ref object ## A runtime procedure.
+    case kind*: ProcKind
+    of pkNative:
+      chunk*: Chunk ## The chunk of bytecode of this procedure.
+      stackSize*: int ## The amount of values this procedure needs on the stack.
+    of pkForeign:
+      discard # TODO: foreign procedures
+    paramCount*: int ## The number of parameters this procedure takes.
 
 proc addLineInfo*(chunk: var Chunk, n: int) =
   ## Add ``n`` line info entries to the chunk.
@@ -138,7 +111,7 @@ proc emit*(chunk: var Chunk, u16: uint16) =
 proc emit*(chunk: var Chunk, val: Value) =
   ## Emit a Value.
   chunk.addLineInfo(ValueSize)
-  chunk.code.add(val.rawBytes)
+  chunk.code.add(val.into.bytes)
 
 proc emitHole*(chunk: var Chunk, size: int): int =
   ## Emit a hole, to be filled later by ``fillHole``.
@@ -175,8 +148,7 @@ proc getValue*(chunk: Chunk, i: int): Value =
     raw = cast[ptr UncheckedArray[uint8]](chunk.code[i].unsafeAddr)
   for i in low(bytes)..high(bytes):
     bytes[i] = raw[i]
-  result =
-    Value(rawBytes: bytes)
+  result = Value(into: RawValue(bytes: bytes))
 
 proc getLineInfo*(chunk: Chunk, i: int): LineInfo =
   ## Get the line info at position ``i``. **Warning:** This is very slow,
@@ -189,82 +161,11 @@ proc getLineInfo*(chunk: Chunk, i: int): LineInfo =
         return li
       inc(n)
 
-proc initChunk*(): Chunk =
+proc newChunk*(): Chunk =
   ## Create a new chunk.
   result = Chunk()
 
-proc `$`*(sym: Sym): string =
-  ## Stringify a symbol.
-  case sym.kind
-  of skVar:
-    result = "var of type " & $sym.varTy.name
-  of skLet:
-    result = "let of type " & $sym.varTy.name
-  of skType:
-    result = "type = "
-    case sym.tyKind
-    of tkPrimitive:
-      result.add("primitive")
-    of tkObject:
-      result.add("object {")
-      for name, field in sym.objFields:
-        result.add(" " & name & ": " & $field.ty.name & ";")
-      result.add(" }")
-  of skProc:
-    result = "proc " & $sym.procId & "("
-    for i, param in sym.procParams:
-      result.add($param.name & ": " & $param.ty)
-      if i != sym.procParams.len - 1:
-        result.add(", ")
+proc newScript*(main: Chunk): Script =
+  ## Create a new script, with the given main chunk.
+  result = Script(mainChunk: main)
 
-proc newSym*(kind: SymKind, name: Node, impl: Node = nil): Sym =
-  ## Create a new symbol from a Node.
-  result = Sym(name: name, impl: impl, kind: kind)
-
-proc genSym*(kind: SymKind, name: string): Sym =
-  ## Generate a new symbol from a string name.
-  result = Sym(name: Node(kind: nkIdent, ident: name), kind: kind)
-
-proc newType*(kind: TypeKind, name: Node): Sym =
-  ## Create a new type symbol from a Node.
-  result = Sym(name: name, kind: skType, tyKind: kind)
-
-proc genType*(kind: TypeKind, name: string): Sym =
-  ## Generate a new type symbol from a string name.
-  result = Sym(name: Node(kind: nkIdent, ident: name), kind: skType,
-               tyKind: kind)
-
-proc `$`*(module: Module): string =
-  ## Stringifies a module.
-  result = "module " & module.name & ":"
-  for name, sym in module.syms:
-    result.add("\n")
-    result.add("  ")
-    result.add(name)
-    result.add(": ")
-    result.add($sym)
-
-proc addPrimitiveType*(module: var Module, name: string) =
-  ## Add a simple (primitive) type into a module.
-  var sym = genType(tkPrimitive, name)
-  module.syms.add(name, sym)
-
-proc sym*(module: Module, name: string): Sym =
-  ## Lookup the symbol ``name`` from a module.
-  result = module.syms[name]
-
-proc load*(module: var Module, other: Module) =
-  ## Import the module ``other`` into ``module``.
-  for name, sym in other.syms:
-    module.syms.add(name, sym)
-
-var rodSystem = Module(name: "system") ## The ``system`` module of rod.
-rodSystem.addPrimitiveType("void")
-rodSystem.addPrimitiveType("bool")
-rodSystem.addPrimitiveType("number")
-
-proc initModule*(name: string): Module =
-  ## Initialize a new module. This implicitly loads ``system`` into the newly
-  ## created module.
-  result = Module(name: name)
-  result.load(rodSystem)

@@ -11,6 +11,7 @@ type
   RodError* = object of CatchableError
     case kind*: RodErrorKind
     of reSyntax, reCompile:
+      file*: string
       ln*, col*: int
 
 template OrdTable*(K, V: typedesc): typedesc =

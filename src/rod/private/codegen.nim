@@ -13,24 +13,181 @@ import common
 import parser
 import value
 
+#--
+# Compile-time info
+#--
+
+type
+  Scope = ref object of RootObj ## A local scope.
+    syms: Table[string, Sym]
+  Module* = ref object of Scope ## \
+      ## A module representing the global scope of a single source file.
+    name: string ## The name of the module.
+  SymKind = enum ## The kind of a symbol.
+    skVar
+    skLet
+    skType
+    skProc
+  TypeKind = enum ## The kind of a type.
+    tkPrimitive
+    tkObject
+  Sym = ref object ## A symbol.
+    name: Node ## The name of the symbol.
+    impl: Node ## \
+      ## The implementation of the symbol. May be ``nil`` if the
+      ## symbol is generated.
+    case kind: SymKind
+    of skVar, skLet:
+      varTy: Sym ## The type of the variable.
+      varSet: bool ## Is the variable set?
+      varLocal: bool ## Is the variable local?
+      varStackPos: int ## The position of a local variable on the stack.
+    of skType:
+      case tyKind: TypeKind
+      of tkPrimitive: discard
+      of tkObject:
+        objFields: Table[string, ObjectField]
+    of skProc:
+      procId: uint16 ## The unique number of the proc.
+      procParams: seq[ProcParam] ## The proc's parameters.
+      procReturnTy: Sym ## The return type of the proc.
+  ObjectField = tuple
+    id: int
+    name: Node
+    ty: Sym
+  ProcParam* = tuple ## A single param of a proc.
+    name: Node
+    ty: Sym
+
+const skVars = {skVar, skLet}
+
+proc `$`(sym: Sym): string =
+  ## Stringify a symbol.
+  case sym.kind
+  of skVar:
+    result = "var of type " & $sym.varTy.name
+  of skLet:
+    result = "let of type " & $sym.varTy.name
+  of skType:
+    result = "type = "
+    case sym.tyKind
+    of tkPrimitive:
+      result.add("primitive")
+    of tkObject:
+      result.add("object {")
+      for name, field in sym.objFields:
+        result.add(" " & name & ": " & $field.ty.name & ";")
+      result.add(" }")
+  of skProc:
+    result = "proc " & $sym.procId & " ("
+    for i, param in sym.procParams:
+      result.add(param.name.ident & ": " & param.ty.name.ident)
+      if i != sym.procParams.len - 1:
+        result.add(", ")
+    result.add(")")
+
+proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
+  ## Create a new symbol from a Node.
+  result = Sym(name: name, impl: impl, kind: kind)
+
+proc genSym(kind: SymKind, name: string): Sym =
+  ## Generate a new symbol from a string name.
+  result = Sym(name: newIdent(name), kind: kind)
+
+proc newType(kind: TypeKind, name: Node): Sym =
+  ## Create a new type symbol from a Node.
+  result = Sym(name: name, kind: skType, tyKind: kind)
+
+proc genType(kind: TypeKind, name: string): Sym =
+  ## Generate a new type symbol from a string name.
+  result = Sym(name: newIdent(name), kind: skType,
+               tyKind: kind)
+
+proc `$`*(module: Module): string =
+  ## Stringifies a module.
+  result = "module " & module.name & ":"
+  for name, sym in module.syms:
+    result.add("\n")
+    result.add("  ")
+    result.add(name)
+    result.add(": ")
+    result.add($sym)
+
+proc addPrimitiveType*(module: Module, name: string) =
+  ## Add a simple (primitive) type into a module.
+  var sym = genType(tkPrimitive, name)
+  module.syms.add(name, sym)
+
+proc sym(module: Module, name: string): Sym =
+  ## Lookup the symbol ``name`` from a module.
+  result = module.syms[name]
+
+proc load*(module: Module, other: Module) =
+  ## Import the module ``other`` into ``module``.
+  for name, sym in other.syms:
+    module.syms.add(name, sym)
+
+proc addProc*(script: Script, module: Module, name, impl: Node,
+              params: openarray[ProcParam], returnTy: Sym,
+              kind: ProcKind): Proc =
+  ## Add a procedure to the given module, belonging to the given script.
+  let id = script.procs.len.uint16
+  result = Proc(kind: kind, paramCount: params.len)
+  script.procs.add(result)
+  let sym = newSym(skProc, name, impl)
+  sym.procId = id
+  sym.procParams = @params
+  sym.procReturnTy = returnTy
+  module.syms[name.ident] = sym
+
+proc addProc*(script: Script, module: Module, name: string,
+              params: openarray[(string, string)], returnTy: string): Proc =
+  ## Add a foreign procedure to the given module, belonging to the given script.
+  var nodeParams: seq[ProcParam]
+  for param in params:
+    nodeParams.add((newIdent(param[0]), module.sym(param[1])))
+  result = script.addProc(module, newIdent(name), impl = nil,
+                          nodeParams, module.sym(returnTy), pkForeign)
+
+proc newModule*(name: string): Module =
+  ## Initialize a new module.
+  result = Module(name: name)
+
+proc systemModule*(script: Script): Module =
+  ## Create and initialize the ``system`` module. There should be one ``system``
+  ## per Script.
+  result = newModule("system")
+  result.addPrimitiveType("void")
+  result.addPrimitiveType("bool")
+  result.addPrimitiveType("number")
+  result.addPrimitiveType("string")
+  let procEcho = script.addProc(result, "echo", {"text": "string"}, "void")
+
+#--
+# Code generation
+#--
+
 type
   Loop = ref object
     before: int
     breaks: seq[int]
     bottomScope: int
   CodeGen* = object
+    script: Script
     module: Module
     chunk: Chunk
     scopes: seq[Scope]
     loops: seq[Loop]
 
-proc initCodeGen*(module: Module, chunk: Chunk): CodeGen =
-  result = CodeGen(module: module, chunk: chunk)
+proc initCodeGen*(script: Script, module: Module, chunk: Chunk): CodeGen =
+  result = CodeGen(script: script, module: module, chunk: chunk)
 
 proc error(node: Node, msg: string) =
   ## Raise a compile error on the given node.
-  raise (ref RodError)(kind: reCompile, ln: node.ln, col: node.col,
-                       msg: fmt"{node.file} {node.ln}:{node.col} {msg}")
+  raise (ref RodError)(kind: reCompile,
+                       file: node.file,
+                       ln: node.ln, col: node.col,
+                       msg: fmt"{node.file}({node.ln}, {node.col}): {msg}")
 
 template genGuard(body) =
   ## Wraps ``body`` in a "guard" used for code generation. The guard sets the
@@ -168,6 +325,11 @@ proc pushConst(node: Node): Sym {.codegen.} =
     gen.chunk.emit(opcPushN)
     gen.chunk.emit(initValue(node.numberVal))
     result = gen.module.sym"number"
+  of nkString:
+    # strings - use pushS with a string ID
+    gen.chunk.emit(opcPushS)
+    gen.chunk.emit(gen.chunk.getString(node.stringVal))
+    result = gen.module.sym"string"
   else: discard
 
 proc prefix(node: Node): Sym {.codegen.} =
@@ -309,7 +471,7 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   result = gen.lookup(node[0]) # find the object type that's being constructed
   if result.tyKind != tkObject:
     node.error(fmt"<{result.name}> is not an object type")
-  if node.children.len - 1 < result.objFields.len:
+  if node.children.len - 1 != result.objFields.len:
     # TODO: allow the user to not initialize some fields, and set them to their
     # types' default values instead.
     node.error("All fields of an object must be initialized")
@@ -318,17 +480,16 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   var fields: seq[tuple[node: Node, field: ObjectField]]
   fields.setLen(result.objFields.len)
   for f in node.children[1..^1]:
+    if f.kind != nkColon:
+      f.error("Field initializer must be a colon expression 'a: b'")
     let name = f[0].ident
     if name notin result.objFields:
-      node.error(fmt"<{result.name}> does not have a field '{name}'")
+      f[0].error(fmt"<{result.name}> does not have a field '{name}'")
     let field = result.objFields[name]
     fields[field.id] = (node: f[1], field: field)
-  # iterate the fields and values in reverse, and push them onto the stack.
-  # we iterate in reverse because that's how stacks work.
-  for i in countdown(fields.len - 1, 0):
-    let
-      (value, field) = fields[i]
-      ty = gen.genExpr(value)
+  # iterate the fields and values, and push them onto the stack.
+  for (value, field) in fields:
+    let ty = gen.genExpr(value)
     if ty != field.ty:
       node.error(fmt"Type mismatch: field has type <{field.ty.name}>, " &
                  fmt"but got <{ty.name}>")
@@ -337,7 +498,21 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   gen.chunk.emit(uint8(fields.len))
 
 proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
-  discard
+  ## Generate code for a procedure call.
+  if procSym.kind == skProc:
+    let params = node.children[1..^1]
+    for i, param in params:
+      let
+        ty = gen.genExpr(param)
+        expectedTy = procSym.procParams[i].ty
+      if ty != expectedTy:
+        node.error(fmt"Type mismatch at parameter {i + 1}: " &
+                   fmt"got <{ty.name}>, but expected <{expectedTy.name}>")
+    gen.chunk.emit(opcCallD)
+    gen.chunk.emit(procSym.procId)
+    result = procSym.procReturnTy
+  else:
+    discard # call through reference in variable
 
 proc call(node: Node): Sym {.codegen.} =
   ## Generates code for a nkCall (proc call or object constructor).
@@ -345,6 +520,9 @@ proc call(node: Node): Sym {.codegen.} =
   if sym.kind == skType:
     # object construction
     result = gen.objConstr(node, sym)
+  else:
+    # procedure call
+    result = gen.procCall(node, sym)
 
 proc genGetField(node: Node): Sym {.codegen.} =
   ## Generate code for field access.
@@ -432,7 +610,7 @@ proc genIf(node: Node, isStmt: bool): Sym {.codegen.} =
 proc genExpr(node: Node): Sym {.codegen.} =
   ## Generates code for an expression.
   case node.kind
-  of nkBool, nkNumber: # constants
+  of nkBool, nkNumber, nkString: # constants
     result = gen.pushConst(node)
   of nkIdent: # variables
     var varSym = gen.lookup(node)
@@ -523,11 +701,12 @@ proc genObject(node: Node) {.codegen.} =
 
   # create a new type for the object
   var ty = newType(tkObject, node[0])
+  ty.impl = node
   for fields in node.children[1..^1]:
     # get the fields' type
-    let fieldsTy = gen.lookup(fields.children[^1])
+    let fieldsTy = gen.lookup(fields[^2])
     # create all the fields with the given type
-    for name in fields.children[0..^2]:
+    for name in fields.children[0..^3]:
       ty.objFields.add(name.ident,
                        (id: ty.objFields.len, name: name, ty: fieldsTy))
   if gen.scopes.len > 0:
@@ -542,19 +721,26 @@ proc genStmt(node: Node) {.codegen.} =
   case node.kind
   of nkLet, nkVar: # variable declarations
     for decl in node.children:
-      let valTy = gen.genExpr(decl[2]) # generate the value
-      if decl[3].kind != nkEmpty:
+      if decl[^1].kind == nkEmpty:
+        # TODO: if the type was specified, set the value to the default value of
+        # the given type
+        decl[^1].error("Variable must have a value")
+      var valTy: Sym
+      for name in decl.children[0..^3]:
+        # generate the value
+        valTy = gen.genExpr(decl[^1])
+        # declare the variable
+        gen.declareVar(name,
+                       if node.kind == nkVar: skVar
+                       else: skLet,
+                       valTy)
+        # and pop the value into it
+        gen.popVar(name)
+      if decl[^2].kind != nkEmpty:
         # if an explicit type was specified, check if the value's type matches
-        let expectedTy = gen.lookup(decl[3])
+        let expectedTy = gen.lookup(decl[^2])
         if valTy != expectedTy:
-          decl[2].error("Value does not match the specified type")
-      # declare the variable
-      gen.declareVar(decl[1],
-                     if node.kind == nkVar: skVar
-                     else: skLet,
-                     valTy)
-      # and pop the value into it
-      gen.popVar(decl[1])
+          decl[^1].error("Value does not match the specified type")
   of nkBlock: discard gen.genBlock(node, true) # block statement
   of nkIf: discard gen.genIf(node, true) # if statement
   of nkWhile: gen.genWhile(node) # while loop

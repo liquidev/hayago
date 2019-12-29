@@ -11,26 +11,40 @@ const
     sizeof(string)
   ])
 
+const
+  tyBool* = 0
+  tyNumber* = 1
+  tyString* = 2
+  tyObject* = {16..high(uint16)}
+
 type
-  Value* {.union.} = object ## A value. \
-    ## Values are union types. They don't need to be annotated with an extra
-    ## type field, because all types are resolved and checked statically. This
-    ## improves execution time greatly, because runtime checks involving value
-    ## types are not required.
-    rawBytes*: array[ValueSize, uint8]
+  RawValue* {.union.} = object ## A raw, untagged value.
+    bytes*: array[ValueSize, uint8]
     boolVal*: bool
     numberVal*: float
     stringVal*: string
+  Value* = object ## A rod value.
+    typeId*: uint16 ## The type ID, used for dynamic dispatch.
+    into*: RawValue
+  Stack* = seq[Value] ## A runtime stack of values, used in the VM.
+  StackView* = ptr UncheckedArray[Value] ## An unsafe view into a Stack.
+  ForeignProc* = proc (args: StackView): Value ## A foreign proc.
 
 proc boolStr*(value: Value): string =
-  result = $value.boolVal
+  result = $value.into.boolVal
 
 proc numberStr*(value: Value): string =
-  result = $value.numberVal
+  result = $value.into.numberVal
 
 proc initValue*(value: bool): Value =
-  result = Value(boolVal: value)
+  result = Value(typeId: tyBool)
+  result.into.boolVal = value
 
 proc initValue*(value: float): Value =
-  result = Value(numberVal: value)
+  result = Value(typeId: tyNumber)
+  result.into.numberVal = value
+
+proc initValue*(value: string): Value =
+  result = Value(typeId: tyString)
+  result.into.stringVal = value
 

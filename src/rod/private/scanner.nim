@@ -54,6 +54,7 @@ proc `$`*(token: Token): string =
   case token.kind
   of tokNumber: result.add($token.numberVal)
   of tokOperator: result.add(token.operator & " (prec: " & $token.prec & ")")
+  of tokString: result.add(escape(token.stringVal))
   of tokIdent: result.add(token.ident)
   else: discard
 
@@ -97,6 +98,7 @@ proc error*(scan: Scanner, msg: string) =
   raise (ref RodError)(kind: reSyntax,
                        msg: scan.file & "(" & $scan.ln & ", " & $scan.col &
                             "): " & msg,
+                       file: scan.file,
                        ln: scan.ln, col: scan.col)
 
 proc atEnd*(scan: Scanner): bool =

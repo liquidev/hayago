@@ -40,10 +40,13 @@ proc disassemble*(chunk: Chunk, input = ""): string =
     line.add("  " & alignLeft($opc, 12))
     case opc
     of opcPushN:
-      line.add($chunk.getValue(pc + 1).numberVal)
+      line.add($chunk.getValue(pc + 1).into.numberVal)
       inc(pc, 1 + ValueSize)
-    of opcPushG, opcPopG:
+    of opcPushS, opcPushG, opcPopG:
       line.add(escape(chunk.strings[chunk.getU16(pc + 1)]))
+      inc(pc, 3)
+    of opcCallD:
+      line.add($chunk.getU16(pc + 1))
       inc(pc, 3)
     of opcPushL, opcPopL, opcConstrObj, opcPushF, opcPopF, opcDiscard:
       line.add($chunk.getU8(pc + 1))
@@ -60,6 +63,7 @@ proc disassemble*(chunk: Chunk, input = ""): string =
        opcInvB, opcEqB,
        opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
        opcEqN, opcLessN, opcLessEqN, opcGreaterN, opcGreaterEqN,
+       opcCallR,
        opcHalt: inc(pc, 1)
     if inputLine != "":
       line = alignLeft(line, 48) & inputLine
