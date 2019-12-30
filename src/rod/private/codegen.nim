@@ -138,7 +138,9 @@ proc addProc*(script: Script, module: Module, name, impl: Node,
     strName =
       if name.kind == nkEmpty: ":anonymous"
       else: name.ident
-  result = Proc(name: strName, kind: kind, paramCount: params.len)
+  result = Proc(name: strName, kind: kind,
+                paramCount: params.len,
+                hasResult: returnTy.tyKind != tkVoid)
   script.procs.add(result)
   let sym = newSym(skProc, name, impl)
   sym.procId = id
@@ -428,9 +430,9 @@ proc infix(node: Node): Sym {.codegen.} =
       of "==": gen.chunk.emit(opcEqN)
       of "!=": gen.chunk.emit(opcEqN); gen.chunk.emit(opcInvB)
       of "<": gen.chunk.emit(opcLessN)
-      of "<=": gen.chunk.emit(opcLessEqN)
+      of "<=": gen.chunk.emit(opcGreaterN); gen.chunk.emit(opcInvB)
       of ">": gen.chunk.emit(opcGreaterN)
-      of ">=": gen.chunk.emit(opcGreaterEqN)
+      of ">=": gen.chunk.emit(opcLessN); gen.chunk.emit(opcInvB)
       else: typeMismatch = true # unknown operator
       result =
         case node[0].ident
@@ -689,9 +691,10 @@ proc genProc(node: Node) {.codegen.} =
       params.add((name, ty))
   # get the return type
   # empty return type == void
-  let returnTy =
-    if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
-    else: gen.module.sym"void"
+  let
+    returnTy =
+      if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
+      else: gen.module.sym"void"
   # add a new proc to the module and script, create a chunk for it, and generate
   # its code
   var

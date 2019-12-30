@@ -34,9 +34,7 @@ type
     opcEqB = "eqB" ## Equal bools
     opcEqN = "eqN" ## Equal numbers
     opcLessN = "lessN" ## Number less than
-    opcLessEqN = "lessEqN" ## Number less than or equal
-    opcGreaterN = "greaterN" ## Number greater than
-    opcGreaterEqN = "greaterEqN" ## Number greater than or equal
+    opcGreaterN = "lessEqN" ## Number greater than
     # Execution
     opcJumpFwd = "jumpFwd" ## Jump forward
     opcJumpFwdT = "jumpFwdT" ## Jump forward if true
@@ -71,6 +69,7 @@ type
     of pkForeign:
       foreign*: ForeignProc
     paramCount*: int ## The number of parameters this procedure takes.
+    hasResult*: bool ## Does the proc return a value?
 
 proc addLineInfo*(chunk: var Chunk, n: int) =
   ## Add ``n`` line info entries to the chunk.
@@ -99,14 +98,13 @@ proc emit*(chunk: var Chunk, opc: Opcode) =
 
 proc emit*(chunk: var Chunk, u8: uint8) =
   ## Emit a ``uint8``.
-  chunk.addLineInfo(1)
+  chunk.addLineInfo(sizeof(uint8))
   chunk.code.add(u8)
 
 proc emit*(chunk: var Chunk, u16: uint16) =
   ## Emit a ``uint16``.
-  chunk.addLineInfo(2)
-  chunk.code.add([uint8 u16 and 0x00ff'u16,
-                  uint8 (u16 and 0xff00'u16) shr 8])
+  chunk.addLineInfo(sizeof(uint16))
+  chunk.code.add(cast[array[sizeof(uint16), uint8]](u16))
 
 proc emit*(chunk: var Chunk, val: float) =
   ## Emit a float.

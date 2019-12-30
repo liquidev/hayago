@@ -62,7 +62,7 @@ proc disassemble*(chunk: Chunk, input = ""): string =
     of opcPushTrue, opcPushFalse,
        opcInvB, opcEqB,
        opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
-       opcEqN, opcLessN, opcLessEqN, opcGreaterN, opcGreaterEqN,
+       opcEqN, opcLessN, opcGreaterN,
        opcCallR,
        opcReturn, opcHalt: inc(pc, 1)
     if inputLine != "":
