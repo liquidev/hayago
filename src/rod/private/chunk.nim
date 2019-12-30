@@ -1,12 +1,9 @@
 #--
 # the rod scripting language
-# copyright (C) iLiquid, 2019
+# copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
 
-import tables
-
-import parser
 import value
 
 type
@@ -14,6 +11,7 @@ type
     # Stack
     opcPushTrue = "pushTrue"
     opcPushFalse = "pushFalse"
+    opcPushNil = "pushNil"
     opcPushN = "pushN" ## Push number
     opcPushS = "pushS" ## Push string
     opcPushG = "pushG" ## Push global
@@ -46,11 +44,13 @@ type
     opcJumpBack = "jumpBack" ## Jump backward
     opcCallD = "callD" ## Call direct
     opcCallR = "callR" ## Call indirect
+    opcReturn = "return" ## Return from proc
     opcHalt = "halt"
 
   Script* = ref object ## A complete rod script.
     procs*: seq[Proc] ## The procs declared across all of the script's modules.
     mainChunk*: Chunk ## The main chunk of this script.
+    typeCount*: int ## The number of types in this script. Used for compilation.
   LineInfo* = tuple ## Line information.
     ln, col: int
     runLength: int
@@ -64,12 +64,12 @@ type
     pkNative ## A native (bytecode) proc
     pkForeign ## A foreign (Nim) proc
   Proc* = ref object ## A runtime procedure.
+    name*: string
     case kind*: ProcKind
     of pkNative:
       chunk*: Chunk ## The chunk of bytecode of this procedure.
-      stackSize*: int ## The amount of values this procedure needs on the stack.
     of pkForeign:
-      discard # TODO: foreign procedures
+      foreign*: ForeignProc
     paramCount*: int ## The number of parameters this procedure takes.
 
 proc addLineInfo*(chunk: var Chunk, n: int) =
@@ -108,10 +108,10 @@ proc emit*(chunk: var Chunk, u16: uint16) =
   chunk.code.add([uint8 u16 and 0x00ff'u16,
                   uint8 (u16 and 0xff00'u16) shr 8])
 
-proc emit*(chunk: var Chunk, val: Value) =
-  ## Emit a Value.
+proc emit*(chunk: var Chunk, val: float) =
+  ## Emit a float.
   chunk.addLineInfo(ValueSize)
-  chunk.code.add(val.into.bytes)
+  chunk.code.add(cast[array[sizeof(float), uint8]](val))
 
 proc emitHole*(chunk: var Chunk, size: int): int =
   ## Emit a hole, to be filled later by ``fillHole``.
@@ -141,14 +141,14 @@ proc getU16*(chunk: Chunk, i: int): uint16 =
   ## Get the ``uint16`` at position ``i``.
   result = chunk.code[i].uint16 or chunk.code[i + 1].uint16 shl 8
 
-proc getValue*(chunk: Chunk, i: int): Value =
-  ## Get a constant Value at position ``i``.
+proc getFloat*(chunk: Chunk, i: int): float =
+  ## Get a constant float at position ``i``.
   var
-    bytes: array[ValueSize, uint8]
+    bytes: array[sizeof(float), uint8]
     raw = cast[ptr UncheckedArray[uint8]](chunk.code[i].unsafeAddr)
   for i in low(bytes)..high(bytes):
     bytes[i] = raw[i]
-  result = Value(into: RawValue(bytes: bytes))
+  result = cast[float](bytes)
 
 proc getLineInfo*(chunk: Chunk, i: int): LineInfo =
   ## Get the line info at position ``i``. **Warning:** This is very slow,

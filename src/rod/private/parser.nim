@@ -15,40 +15,41 @@ import scanner
 type
   NodeKind* = enum
     # building blocks
-    nkEmpty        # empty node
-    nkScript       # full script
-    nkBlock        # a block - {...}
-    nkIdentDefs    # identifier definitions - a, b: s = x
+    nkEmpty                   # empty node
+    nkScript                  # full script
+    nkBlock                   # a block - {...}
+    nkIdentDefs               # identifier definitions - a, b: s = x
     nkFormalParams # formal params - (a: s, ...) -> t
     # literals
-    nkBool         # bool literal
-    nkNumber       # number literal
-    nkString       # string literal
-    nkIdent        # identifier
+    nkBool                    # bool literal
+    nkNumber                  # number literal
+    nkString                  # string literal
+    nkIdent # identifier
     # expressions
-    nkPrefix       # prefix operator - op expr
-    nkInfix        # infix operator - left op right
-    nkDot          # dot expression - left.right
-    nkColon        # colon expression - left: right
-    nkIndex        # index expression - left[a, ...]
-    nkCall         # call - left(a, ...)
-    nkIf           # if expression - if expr {...} elif expr {...} else {...}
+    nkPrefix                  # prefix operator - op expr
+    nkInfix                   # infix operator - left op right
+    nkDot                     # dot expression - left.right
+    nkColon                   # colon expression - left: right
+    nkIndex                   # index expression - left[a, ...]
+    nkCall                    # call - left(a, ...)
+    nkIf # if expression - if expr {...} elif expr {...} else {...}
     # types
-    nkProcTy       # procedure type - proc (...) -> t
+    nkProcTy                  # procedure type - proc (...) -> t
     # statements
-    nkVar          # var declaration - var a = x
-    nkLet          # let declaration - let a = x
-    nkWhile        # while loop - while cond {...}
-    nkFor          # for loop - for x in y {...}
-    nkBreak        # break statement - break
-    nkContinue     # continue statement - continue
+    nkVar                     # var declaration - var a = x
+    nkLet                     # let declaration - let a = x
+    nkWhile                   # while loop - while cond {...}
+    nkFor                     # for loop - for x in y {...}
+    nkBreak                   # break statement - break
+    nkContinue                # continue statement - continue
+    nkReturn                  # return statement - return x
     # declarations
-    nkObject       # object declaration - object name[T, ...] {...}
-    nkProc         # procedure declaration - proc name(a: s, ...) -> t {...}
-  Node* = ref object ## An AST node.
-    ln*, col*: int ## Line information used for compile errors
+    nkObject                  # object declaration - object name[T, ...] {...}
+    nkProc # procedure declaration - proc name(a: s, ...) -> t {...}
+  Node* = ref object          ## An AST node.
+    ln*, col*: int            ## Line information used for compile errors
     file*: string
-    case kind*: NodeKind ## The kind of the node
+    case kind*: NodeKind      ## The kind of the node
     of nkEmpty: ## Empty node
       discard
     of nkBool: ## Bool literal
@@ -295,8 +296,8 @@ proc parseProc(anon: bool): Node {.rule.} =
   parseProcHead(scan, anon, name, formalParams)
   let body = parseBlock(scan)
   result = newTree(nkProc, name,
-                        newEmpty(), # reserved for generic params
-                        formalParams, body)
+                   newEmpty(), # reserved for generic params
+                   formalParams, body)
 
 proc parsePrefix(token: Token): Node {.rule.} =
   ## Parses a prefix expression.
@@ -309,7 +310,7 @@ proc parsePrefix(token: Token): Node {.rule.} =
   of tokString: result = newStringLit(token.stringVal)
   of tokIdent: result = newIdent(token.ident)
   of tokOperator: result = newTree(nkPrefix, newIdent(token.operator),
-                                        parsePrefix(scan, scan.next()))
+                                   parsePrefix(scan, scan.next()))
   of tokLPar: result = parseParExpr(scan)
   of tokIf: result = parseIf(scan)
   of tokProc: result = parseProc(scan, anon = true)
@@ -325,7 +326,7 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
   of tokOperator: # Binary operator
     if token.operator notin ["not", "->", "$"]:
       result = newTree(nkInfix, newIdent(token.operator),
-                            left, parseExpr(scan, token.prec))
+                       left, parseExpr(scan, token.prec))
   of tokLBrk: # index operator '[]'
     result = newTree(nkIndex, left, parseExpr(scan, prec = PrecCall))
     while scan.peek().kind == tokComma:
@@ -368,8 +369,9 @@ proc parseExpr(prec = 0): Node {.rule.} =
 proc parseVar(): Node {.rule.} =
   ## Parses a variable declaration.
   # var <- ('var' | 'let') Ident ?(':' expr(9)) '=' expr
-  result = newNode(if scan.next().kind == tokVar: nkVar
-                        else: nkLet)
+  result = newNode(
+    if scan.next().kind == tokVar: nkVar
+    else: nkLet)
   result.add(parseIdentDefs(scan))
   if result.children.len < 1:
     scan.error("Variable declaration expected")
@@ -413,9 +415,23 @@ proc parseContinue(): Node {.rule.} =
   discard scan.next()
   result = newNode(nkContinue)
 
+proc parseReturn(): Node {.rule.} =
+  ## Parses a return statement.
+  # return <- 'return' ?expr
+  discard scan.next()
+  result = newNode(nkReturn)
+  if not scan.peekLinefeed():
+    result.add(parseExpr(scan))
+  else:
+    result.add(newEmpty())
+
 proc parseStmt(): Node {.rule.} =
   ## Parses a statement.
-  # stmt <- block | var | object | proc | while | break | continue | expr
+  # stmt <- block |
+  #         var | object | proc |
+  #         while |
+  #         break | continue | return |
+  #         expr
   result =
     case scan.peek().kind
     of tokLBrace: parseBlock(scan)
@@ -425,6 +441,7 @@ proc parseStmt(): Node {.rule.} =
     of tokWhile: parseWhile(scan)
     of tokBreak: parseBreak(scan)
     of tokContinue: parseContinue(scan)
+    of tokReturn: parseReturn(scan)
     else: parseExpr(scan)
 
 proc parseBlock(): Node {.rule.} =

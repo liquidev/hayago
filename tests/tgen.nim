@@ -37,7 +37,7 @@ template compile(input: string) =
     cp.genScript(ast)
   echo ast
   echo module
-  echo main.disassemble(input)
+  echo `$`(script, input)
 
 suite "compiler":
   test "variables":
@@ -115,4 +115,21 @@ suite "compiler":
   test "procs":
     compile("""
       echo("Hello!")
+    """)
+    compile("""
+      proc sayHello(target: string) {
+        echo("Hello, ")
+        echo(target)
+        echo("!")
+      }
+    """)
+    compile("""
+      proc fac(n: number) -> number {
+        result = 1
+        var i = 1
+        while i <= n {
+          result = result * i
+          i = i + 1
+        }
+      }
     """)

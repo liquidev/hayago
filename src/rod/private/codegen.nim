@@ -1,6 +1,6 @@
 #--
 # the rod scripting language
-# copyright (C) iLiquid, 2019
+# copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
 
@@ -29,8 +29,11 @@ type
     skType
     skProc
   TypeKind = enum ## The kind of a type.
-    tkPrimitive
-    tkObject
+    tkVoid = "void"
+    tkBool = "bool"
+    tkNumber = "number"
+    tkString = "string"
+    tkObject = "object"
   Sym = ref object ## A symbol.
     name: Node ## The name of the symbol.
     impl: Node ## \
@@ -44,9 +47,10 @@ type
       varStackPos: int ## The position of a local variable on the stack.
     of skType:
       case tyKind: TypeKind
-      of tkPrimitive: discard
+      of tkVoid..tkString: discard
       of tkObject:
-        objFields: Table[string, ObjectField]
+        objectId: TypeId
+        objectFields: Table[string, ObjectField]
     of skProc:
       procId: uint16 ## The unique number of the proc.
       procParams: seq[ProcParam] ## The proc's parameters.
@@ -59,23 +63,24 @@ type
     name: Node
     ty: Sym
 
-const skVars = {skVar, skLet}
+const
+  skVars = {skVar, skLet}
+  tkPrimitives = {tkVoid..tkString}
 
 proc `$`(sym: Sym): string =
   ## Stringify a symbol.
   case sym.kind
   of skVar:
-    result = "var of type " & $sym.varTy.name
+    result = "var of type " & sym.varTy.name.ident
   of skLet:
-    result = "let of type " & $sym.varTy.name
+    result = "let of type " & sym.varTy.name.ident
   of skType:
     result = "type = "
     case sym.tyKind
-    of tkPrimitive:
-      result.add("primitive")
+    of tkPrimitives: result.add($sym.tyKind)
     of tkObject:
       result.add("object {")
-      for name, field in sym.objFields:
+      for name, field in sym.objectFields:
         result.add(" " & name & ": " & $field.ty.name & ";")
       result.add(" }")
   of skProc:
@@ -103,20 +108,17 @@ proc genType(kind: TypeKind, name: string): Sym =
   result = Sym(name: newIdent(name), kind: skType,
                tyKind: kind)
 
-proc `$`*(module: Module): string =
-  ## Stringifies a module.
-  result = "module " & module.name & ":"
-  for name, sym in module.syms:
-    result.add("\n")
-    result.add("  ")
+proc `$`*(scope: Scope): string =
+  ## Stringifies a scope.
+  for name, sym in scope.syms:
+    result.add("\n  ")
     result.add(name)
     result.add(": ")
     result.add($sym)
 
-proc addPrimitiveType*(module: Module, name: string) =
-  ## Add a simple (primitive) type into a module.
-  var sym = genType(tkPrimitive, name)
-  module.syms.add(name, sym)
+proc `$`*(module: Module): string =
+  ## Stringifies a module.
+  result = "module " & module.name & ":" & $module.Scope
 
 proc sym(module: Module, name: string): Sym =
   ## Lookup the symbol ``name`` from a module.
@@ -131,8 +133,12 @@ proc addProc*(script: Script, module: Module, name, impl: Node,
               params: openarray[ProcParam], returnTy: Sym,
               kind: ProcKind): Proc =
   ## Add a procedure to the given module, belonging to the given script.
-  let id = script.procs.len.uint16
-  result = Proc(kind: kind, paramCount: params.len)
+  let
+    id = script.procs.len.uint16
+    strName =
+      if name.kind == nkEmpty: ":anonymous"
+      else: name.ident
+  result = Proc(name: strName, kind: kind, paramCount: params.len)
   script.procs.add(result)
   let sym = newSym(skProc, name, impl)
   sym.procId = id
@@ -141,13 +147,15 @@ proc addProc*(script: Script, module: Module, name, impl: Node,
   module.syms[name.ident] = sym
 
 proc addProc*(script: Script, module: Module, name: string,
-              params: openarray[(string, string)], returnTy: string): Proc =
+              params: openarray[(string, string)], returnTy: string,
+              impl: ForeignProc): Proc {.discardable.} =
   ## Add a foreign procedure to the given module, belonging to the given script.
   var nodeParams: seq[ProcParam]
   for param in params:
     nodeParams.add((newIdent(param[0]), module.sym(param[1])))
   result = script.addProc(module, newIdent(name), impl = nil,
                           nodeParams, module.sym(returnTy), pkForeign)
+  result.foreign = impl
 
 proc newModule*(name: string): Module =
   ## Initialize a new module.
@@ -157,30 +165,40 @@ proc systemModule*(script: Script): Module =
   ## Create and initialize the ``system`` module. There should be one ``system``
   ## per Script.
   result = newModule("system")
-  result.addPrimitiveType("void")
-  result.addPrimitiveType("bool")
-  result.addPrimitiveType("number")
-  result.addPrimitiveType("string")
-  let procEcho = script.addProc(result, "echo", {"text": "string"}, "void")
+  for kind in tkPrimitives:
+    let name = $kind
+    result.syms.add(name, genType(kind, name))
+  script.addProc(result, "echo", {"text": "string"}, "void",
+    proc (args: StackView): Value =
+      echo args[0].stringVal)
 
 #--
 # Code generation
 #--
 
 type
-  Loop = ref object
-    before: int
-    breaks: seq[int]
-    bottomScope: int
-  CodeGen* = object
-    script: Script
-    module: Module
-    chunk: Chunk
-    scopes: seq[Scope]
+  Loop = ref object ## Loop metadata.
+    before: int ## Offset before the loop. Used by ``continue``.
+    breaks: seq[int] ## ``break`` holes.
+    bottomScope: int ## The bottom scope of the loop, used to discard variables
+                     ## upon ``break`` or ``continue``.
+  CodeGen* = object ## A code generator for a module or proc.
+    script: Script ## The script all procs go into.
+    module: Module ## The global scope.
+    chunk: Chunk ## The chunk of code we're generating.
+    scopes: seq[Scope] ## Local scopes.
     loops: seq[Loop]
+    case isToplevel: bool ## Does this generator handle a module or a proc?
+    of false: # handles a proc
+      returns: seq[int] ## ``return`` holes.
+      returnTy: Sym ## The proc's return type.
+    else: # handles a module
+      discard
 
-proc initCodeGen*(script: Script, module: Module, chunk: Chunk): CodeGen =
-  result = CodeGen(script: script, module: module, chunk: chunk)
+proc initCodeGen*(script: Script, module: Module, chunk: Chunk,
+                  isToplevel = true): CodeGen =
+  result = CodeGen(script: script, module: module, chunk: chunk,
+                   isToplevel: isToplevel)
 
 proc error(node: Node, msg: string) =
   ## Raise a compile error on the given node.
@@ -210,6 +228,11 @@ proc varCount(scope: Scope): int =
     if sym.kind in skVars:
       inc(result)
 
+proc varCount(gen: CodeGen): int =
+  ## Count the number of variables in all of the codegen's scopes.
+  for scope in gen.scopes:
+    result += scope.varCount
+
 proc currentScope(gen: CodeGen): Scope =
   ## Returns the current scope.
   result = gen.scopes[^1]
@@ -224,24 +247,36 @@ proc popScope(gen: var CodeGen) =
   gen.chunk.emit(gen.currentScope.varCount.uint8)
   discard gen.scopes.pop()
 
-proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym) =
+proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
+                isMagic = false): Sym {.discardable.} =
   ## Declare a new variable with the given ``name``, of the given ``kind``, with
   ## the given type ``ty``.
+  ## If ``isMagic == true``, this will disable some error checks related to
+  ## magic variables (eg. ``result``).
 
+  # check if the variable's name is not ``result`` when in a non-void proc
+  echo (isMagic, gen.isToplevel)
+  if not isMagic and not gen.isToplevel and gen.returnTy.tyKind != tkVoid:
+    if name.ident == "result":
+      name.error("Variable shadows proc's implicit 'result' variable")
   # create the symbol for the variable
-  assert kind in skVars, "The kind must be a variable."
-  var sym = newSym(kind, name)
-  sym.varTy = ty
-  sym.varSet = false
+  assert kind in skVars, "The kind must be a variable"
+  result = newSym(kind, name)
+  result.varTy = ty
+  result.varSet = false
   if gen.scopes.len > 0:
     # declare a local
-    sym.varLocal = true
-    sym.varStackPos = gen.currentScope.varCount
-    gen.currentScope.syms.add(name.ident, sym)
+    result.varLocal = true
+    result.varStackPos = gen.varCount
+    if name.ident in gen.currentScope.syms:
+      name.error(fmt"'{name.ident}' is already declared in this scope")
+    gen.currentScope.syms.add(name.ident, result)
   else:
     # declare a global
-    sym.varLocal = false
-    gen.module.syms.add(name.ident, sym)
+    result.varLocal = false
+    if name.ident in gen.module.syms:
+      name.error(fmt"'{name.ident}' is already declared")
+    gen.module.syms.add(name.ident, result)
 
 proc lookup(gen: CodeGen, name: Node): Sym =
   ## Look up the symbol with the given ``name``.
@@ -253,6 +288,7 @@ proc lookup(gen: CodeGen, name: Node): Sym =
   if name.ident in gen.module.syms:
     # try to find a global symbol
     return gen.module.syms[name.ident]
+  echo gen.scopes
   name.error(fmt"'{name.ident}' is not declared in the current scope")
 
 proc popVar(gen: var CodeGen, name: Node) =
@@ -280,10 +316,10 @@ proc popVar(gen: var CodeGen, name: Node) =
       isLocal = false
       break findVar
     # if no variable was found, error out
-    name.error(fmt"Attempt to assign to undeclared variable '{name.ident}'")
+    name.error(fmt"Variable '{name.ident}' doesn't exist")
   if sym.kind == skLet and sym.varSet:
     # if the variable is 'let' and it's already set, error out
-    name.error(fmt"Attempt to reassign 'let' variable '{name.ident}'")
+    name.error(fmt"'{name.ident}' cannot be reassigned")
   else:
     if isLocal:
       # if it's a local and it's already been set, use popL, otherwise, just
@@ -300,7 +336,7 @@ proc popVar(gen: var CodeGen, name: Node) =
 
 proc pushVar(gen: var CodeGen, sym: Sym) =
   ## Push the variable represented by ``sym`` to the top of the stack.
-  assert sym.kind in skVars, "The symbol must represent a variable."
+  assert sym.kind in skVars, "The symbol must represent a variable"
   if sym.varLocal:
     # if the variable is a local, use pushL
     gen.chunk.emit(opcPushL)
@@ -309,6 +345,23 @@ proc pushVar(gen: var CodeGen, sym: Sym) =
     # if it's a global, use pushG
     gen.chunk.emit(opcPushG)
     gen.chunk.emit(gen.chunk.getString(sym.name.ident))
+
+proc pushDefault(gen: var CodeGen, ty: Sym) =
+  ## Push the default value for the type ``ty`` onto the stack.
+  assert ty.kind == skType, "Only types have default values"
+  case ty.tyKind
+  of tkVoid: assert false, "void is not a value"
+  of tkBool:
+    gen.chunk.emit(opcPushFalse)
+  of tkNumber:
+    gen.chunk.emit(opcPushN)
+    gen.chunk.emit(0.0)
+  of tkString:
+    gen.chunk.emit(opcPushS)
+    gen.chunk.emit(gen.chunk.getString(""))
+  of tkObject:
+    gen.chunk.emit(opcPushNil)
+    gen.chunk.emit(uint16(tyFirstObject + ty.objectId))
 
 proc genExpr(node: Node): Sym {.codegen.}
 
@@ -323,7 +376,7 @@ proc pushConst(node: Node): Sym {.codegen.} =
   of nkNumber:
     # numbers - use pushN with a number Value
     gen.chunk.emit(opcPushN)
-    gen.chunk.emit(initValue(node.numberVal))
+    gen.chunk.emit(node.numberVal)
     result = gen.module.sym"number"
   of nkString:
     # strings - use pushS with a string ID
@@ -423,9 +476,9 @@ proc infix(node: Node): Sym {.codegen.} =
           typeSym = gen.genExpr(node[1][0]) # generate the receiver's code
           fieldName = node[1][1].ident
           valTy = gen.genExpr(node[2]) # generate the value's code
-        if typeSym.tyKind == tkObject and fieldName in typeSym.objFields:
+        if typeSym.tyKind == tkObject and fieldName in typeSym.objectFields:
           # assign the field if it's valid, using popF
-          let field = typeSym.objFields[fieldName]
+          let field = typeSym.objectFields[fieldName]
           if valTy != field.ty:
             node[2].error(fmt"Type mismatch: field has type <{field.ty.name}>" &
                           fmt" but got <{valTy.name}>")
@@ -471,21 +524,21 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   result = gen.lookup(node[0]) # find the object type that's being constructed
   if result.tyKind != tkObject:
     node.error(fmt"<{result.name}> is not an object type")
-  if node.children.len - 1 != result.objFields.len:
+  if node.children.len - 1 != result.objectFields.len:
     # TODO: allow the user to not initialize some fields, and set them to their
     # types' default values instead.
     node.error("All fields of an object must be initialized")
   # collect the initialized fields into a seq with their values and the fields
   # themselves
   var fields: seq[tuple[node: Node, field: ObjectField]]
-  fields.setLen(result.objFields.len)
+  fields.setLen(result.objectFields.len)
   for f in node.children[1..^1]:
     if f.kind != nkColon:
       f.error("Field initializer must be a colon expression 'a: b'")
     let name = f[0].ident
-    if name notin result.objFields:
+    if name notin result.objectFields:
       f[0].error(fmt"<{result.name}> does not have a field '{name}'")
-    let field = result.objFields[name]
+    let field = result.objectFields[name]
     fields[field.id] = (node: f[1], field: field)
   # iterate the fields and values, and push them onto the stack.
   for (value, field) in fields:
@@ -495,19 +548,30 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
                  fmt"but got <{ty.name}>")
   # construct the object
   gen.chunk.emit(opcConstrObj)
+  gen.chunk.emit(uint16(tyFirstObject + ty.objectId))
   gen.chunk.emit(uint8(fields.len))
 
 proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
   ## Generate code for a procedure call.
   if procSym.kind == skProc:
+    # push ``result`` onto the stack, if applicable
+    if procSym.procReturnTy.tyKind != tkVoid:
+      gen.pushDefault(procSym.procReturnTy)
+    # push the args onto the stack
     let params = node.children[1..^1]
+    if params.len != procSym.procParams.len:
+      # TODO: make this error message less of a syntactic mess when overloading
+      # is introduced into the language
+      node.error(fmt"Incorrect number of parameters: proc has " &
+                 fmt"{procSym.procParams.len}, provided {params.len}")
     for i, param in params:
       let
         ty = gen.genExpr(param)
         expectedTy = procSym.procParams[i].ty
       if ty != expectedTy:
-        node.error(fmt"Type mismatch at parameter {i + 1}: " &
+        node.error(fmt"Type mismatch at argument {i + 1}: " &
                    fmt"got <{ty.name}>, but expected <{expectedTy.name}>")
+    # call the proc
     gen.chunk.emit(opcCallD)
     gen.chunk.emit(procSym.procId)
     result = procSym.procReturnTy
@@ -531,9 +595,9 @@ proc genGetField(node: Node): Sym {.codegen.} =
   let
     typeSym = gen.genExpr(node[0]) # generate the left-hand side
     fieldName = node[1].ident # get the field's name
-  if typeSym.tyKind == tkObject and fieldName in typeSym.objFields:
+  if typeSym.tyKind == tkObject and fieldName in typeSym.objectFields:
     # if it's an existent field, pushF it onto the stack.
-    let field = typeSym.objFields[fieldName]
+    let field = typeSym.objectFields[fieldName]
     result = field.ty
     gen.chunk.emit(opcPushF)
     gen.chunk.emit(field.id.uint8)
@@ -606,6 +670,55 @@ proc genIf(node: Node, isStmt: bool): Sym {.codegen.} =
     if isStmt: gen.module.sym"void"
     # expressions have a type, so return the if's type.
     else: ifTy
+
+proc genProc(node: Node) {.codegen.} =
+  ## Process and compile a procedure.
+
+  # get some basic metadata
+  let
+    name = node[0]
+    formalParams = node[2]
+    body = node[3]
+  # collect the parameters into a seq[ProcParam]
+  var params: seq[ProcParam]
+  for defs in formalParams.children[1..^1]:
+    if defs[^1].kind != nkEmpty:
+      defs[^1].error("Default proc parameters are not yet supported") # TODO
+    let ty = gen.lookup(defs[^2])
+    for name in defs.children[0..^3]:
+      params.add((name, ty))
+  # get the return type
+  # empty return type == void
+  let returnTy =
+    if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
+    else: gen.module.sym"void"
+  # add a new proc to the module and script, create a chunk for it, and generate
+  # its code
+  var
+    theProc = gen.script.addProc(gen.module, name, impl = node,
+                                 params, returnTy, kind = pkNative)
+    chunk = newChunk()
+    procGen = initCodeGen(gen.script, gen.module, chunk, isToplevel = false)
+  procGen.returnTy = returnTy
+  # declare the result variable if the proc returns a value
+  procGen.pushScope()
+  if returnTy.tyKind != tkVoid:
+    let resultSym = procGen.declareVar(newIdent("result"), skVar, returnTy,
+                                       isMagic = true)
+    # ``result`` is set by the proc's caller
+    resultSym.varSet = true
+  # add the proc's parameters as locals
+  # TODO: upvalues
+  procGen.pushScope()
+  for param in params:
+    procGen.declareVar(param.name, skLet, param.ty)
+  # compile the proc's body
+  discard procGen.genBlock(body, isStmt = true)
+  procGen.popScope() # pop the argument scope to remove the args from the stack
+  # finally, return to the calling chunk
+  procGen.chunk.emit(opcReturn)
+  # we're done with generating the chunk
+  theProc.chunk = chunk
 
 proc genExpr(node: Node): Sym {.codegen.} =
   ## Generates code for an expression.
@@ -695,6 +808,28 @@ proc genContinue(node: Node) {.codegen.} =
   gen.chunk.emit(opcJumpBack)
   gen.chunk.emit(uint16(gen.chunk.code.len - loop.before))
 
+proc genReturn(node: Node) {.codegen.} =
+  ## Generate code for a ``return`` statement.
+  if gen.isToplevel:
+    node.error("'return' can only be used inside a proc")
+  # discard the proc's variables except ``result``
+  var varCount = 0
+  for scope in gen.scopes[1..^1]:
+    # we start at scope 1, because scope 0 contains the ``result`` variable
+    inc(varCount, scope.varCount)
+  gen.chunk.emit(opcDiscard)
+  gen.chunk.emit(varCount.uint8)
+  # if we return a value, set ``result`` to that value
+  if node[1].kind != nkEmpty:
+    let valTy = gen.genExpr(node[1])
+    if valTy != gen.returnTy:
+      node[1].error(fmt"Type mismatch: got <{valTy.name}>, but expected " &
+                    fmt"<{gen.returnTy.name}>")
+    gen.popVar(newIdent("result"))
+  # jump to the end of the proc
+  gen.chunk.emit(opcJumpFwd)
+  gen.returns.add(gen.chunk.emitHole(2))
+
 proc genObject(node: Node) {.codegen.} =
   ## Process an object declaration, and add the new type into the current
   ## module or scope.
@@ -702,13 +837,15 @@ proc genObject(node: Node) {.codegen.} =
   # create a new type for the object
   var ty = newType(tkObject, node[0])
   ty.impl = node
+  ty.objectId = gen.script.typeCount
+  inc(gen.script.typeCount)
   for fields in node.children[1..^1]:
     # get the fields' type
     let fieldsTy = gen.lookup(fields[^2])
     # create all the fields with the given type
     for name in fields.children[0..^3]:
-      ty.objFields.add(name.ident,
-                       (id: ty.objFields.len, name: name, ty: fieldsTy))
+      ty.objectFields.add(name.ident,
+                          (id: ty.objectFields.len, name: name, ty: fieldsTy))
   if gen.scopes.len > 0:
     # local type
     gen.currentScope.syms.add(ty.name.ident, ty)
@@ -746,6 +883,8 @@ proc genStmt(node: Node) {.codegen.} =
   of nkWhile: gen.genWhile(node) # while loop
   of nkBreak: gen.genBreak(node) # break statement
   of nkContinue: gen.genContinue(node) # continue statement
+  of nkReturn: gen.genReturn(node) # return statement
+  of nkProc: gen.genProc(node) # procedure declaration
   of nkObject: gen.genObject(node) # object declaration
   else: # expression statement
     let ty = gen.genExpr(node)

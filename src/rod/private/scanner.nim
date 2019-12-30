@@ -29,7 +29,7 @@ type
     tokIf = "if", tokElif = "elif", tokElse = "else"
     tokWhile = "while"
     tokFor = "for", tokIn = "in"
-    tokBreak = "break", tokContinue = "continue"
+    tokBreak = "break", tokContinue = "continue", tokReturn = "return"
     tokObject = "object"
     tokProc = "proc"
     # Special
@@ -85,7 +85,7 @@ const Keywords = {
   "if": tokIf, "elif": tokElif, "else": tokElse,
   "while": tokWhile,
   "for": tokFor, "in": tokIn,
-  "break": tokBreak, "continue": tokContinue,
+  "break": tokBreak, "continue": tokContinue, "return": tokReturn,
   "object": tokObject,
   "proc": tokProc
 }.toTable()
@@ -275,3 +275,4 @@ proc pattern*(scan: var Scanner, patt: openarray[TokenKind]): bool =
 proc initScanner*(input: string, file = "input"): Scanner =
   result = Scanner(file: file, input: input,
                    ln: 1, col: 0)
+
