@@ -82,7 +82,19 @@ proc add*(node: Node, children: openarray[Node]): Node {.discardable.} =
   result = node
 
 proc `$`*(node: Node): string =
-  ## Stringify a node into a lisp representation.
+  ## Stringify a node. This only supports leaf nodes, for trees,
+  ## use ``treeRepr``.
+  assert node.kind in LeafNodes, "only leaf nodes can be `$`'ed"
+  case node.kind
+  of nkEmpty: result = ""
+  of nkBool: result = $node.boolVal
+  of nkNumber: result = $node.numberVal
+  of nkString: result = node.stringVal
+  of nkIdent: result = node.ident
+  else: discard
+
+proc treeRepr*(node: Node): string =
+  ## Stringify a node into a tree representation.
   case node.kind
   of nkEmpty: result = "Empty"
   of nkBool: result = "Bool " & $node.boolVal
@@ -93,7 +105,7 @@ proc `$`*(node: Node): string =
     result = ($node.kind)[2..^1]
     var children = ""
     for i, child in node.children:
-      children.add('\n' & $child)
+      children.add('\n' & child.treeRepr)
     result.add(children.indent(2))
 
 proc newNode*(kind: NodeKind): Node =

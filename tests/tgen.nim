@@ -6,6 +6,7 @@ import rod/private/parser
 import rod/private/chunk
 import rod/private/codegen
 import rod/private/disassembler
+import rod/private/rodlib
 
 template benchmark(name, body) =
   let t0 = epochTime()
@@ -30,12 +31,12 @@ template compile(input: string) =
     var
       main = newChunk()
       script = newScript(main)
-      system = script.systemModule()
+      system = script.modSystem()
       module = newModule("testcase")
       cp = initCodeGen(script, module, main)
     module.load(system)
     cp.genScript(ast)
-  echo ast
+  echo ast.treeRepr
   echo module
   echo `$`(script, input)
 

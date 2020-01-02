@@ -28,6 +28,7 @@ type
     skLet
     skType
     skProc
+    skChoice ## An overloaded symbol, stores many symbols of the same name.
   TypeKind = enum ## The kind of a type.
     tkVoid = "void"
     tkBool = "bool"
@@ -55,6 +56,8 @@ type
       procId: uint16 ## The unique number of the proc.
       procParams: seq[ProcParam] ## The proc's parameters.
       procReturnTy: Sym ## The return type of the proc.
+    of skChoice:
+      choices: seq[Sym] ## The choices.
   ObjectField = tuple
     id: int
     name: Node
@@ -90,6 +93,11 @@ proc `$`(sym: Sym): string =
       if i != sym.procParams.len - 1:
         result.add(", ")
     result.add(")")
+  of skChoice:
+    result = "choice between " & $sym.choices.len & " {"
+    for choice in sym.choices:
+      result.add(" " & $choice & ";")
+    result.add(" }")
 
 proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
   ## Create a new symbol from a Node.
@@ -107,6 +115,52 @@ proc genType(kind: TypeKind, name: string): Sym =
   ## Generate a new type symbol from a string name.
   result = Sym(name: newIdent(name), kind: skType,
                tyKind: kind)
+
+proc canAdd(choice, sym: Sym): bool =
+  ## Tests if ``sym`` can be added into ``choice``. Refer to ``add``
+  ## documentation below for details.
+  assert choice.kind == skChoice
+  case sym.kind
+  of skVars:
+    for other in choice.choices:
+      if other.kind in skVars: return false
+    result = true
+  of skType:
+    for other in choice.choices:
+      if other.kind == skType: return false
+    result = true
+  of skProc:
+    for other in choice.choices:
+      if other.kind == skProc:
+        if sym.procParams.len != other.procParams.len: continue
+        result = false
+        for i, (_, ty) in sym.procParams:
+          if ty != other.procParams[i].ty: return true
+  of skChoice: discard
+
+proc add(scope: Scope, sym: Sym): bool =
+  ## Add a symbol to the given scope. If a symbol under the given name already
+  ## exists, it's added into an skChoice. The rules for overloading are:
+  ## - there may only be one skVar or skLet under a given skChoice,
+  ## - there may only be one skType under a given skChoice,
+  ## - there may be any number of skProcs with unique parameter lists under a
+  ##   single skChoice.
+  ## If any one of these checks fails, the proc will return ``false``.
+  let name = sym.name.ident
+  if name notin scope.syms:
+    scope.syms[name] = sym
+    result = true
+  else:
+    let other = scope.syms[name]
+    if other.kind != skChoice:
+      var choice = newSym(skChoice, other.name)
+      choice.choices.add(other)
+      scope.syms[name] = choice
+    if scope.syms[name].canAdd(sym):
+      scope.syms[name].choices.add(sym)
+      result = true
+    else:
+      result = false
 
 proc `$`*(scope: Scope): string =
   ## Stringifies a scope.
@@ -126,12 +180,19 @@ proc sym(module: Module, name: string): Sym =
 
 proc load*(module: Module, other: Module) =
   ## Import the module ``other`` into ``module``.
-  for name, sym in other.syms:
-    module.syms.add(name, sym)
+  for _, sym in other.syms:
+    discard module.add(sym)
+
+proc error(node: Node, msg: string) =
+  ## Raise a compile error on the given node.
+  raise (ref RodError)(kind: reCompile,
+                       file: node.file,
+                       ln: node.ln, col: node.col,
+                       msg: fmt"{node.file}({node.ln}, {node.col}): {msg}")
 
 proc addProc*(script: Script, module: Module, name, impl: Node,
               params: openarray[ProcParam], returnTy: Sym,
-              kind: ProcKind): Proc =
+              kind: ProcKind, addToScript = true): Proc =
   ## Add a procedure to the given module, belonging to the given script.
   let
     id = script.procs.len.uint16
@@ -141,38 +202,59 @@ proc addProc*(script: Script, module: Module, name, impl: Node,
   result = Proc(name: strName, kind: kind,
                 paramCount: params.len,
                 hasResult: returnTy.tyKind != tkVoid)
-  script.procs.add(result)
+  if addToScript: script.procs.add(result)
   let sym = newSym(skProc, name, impl)
   sym.procId = id
   sym.procParams = @params
   sym.procReturnTy = returnTy
-  module.syms[name.ident] = sym
+  if not module.add(sym):
+    name.error("An overload with the given parameter types already exists")
 
 proc addProc*(script: Script, module: Module, name: string,
               params: openarray[(string, string)], returnTy: string,
-              impl: ForeignProc): Proc {.discardable.} =
+              impl: ForeignProc = nil): Proc {.discardable.} =
   ## Add a foreign procedure to the given module, belonging to the given script.
   var nodeParams: seq[ProcParam]
   for param in params:
     nodeParams.add((newIdent(param[0]), module.sym(param[1])))
   result = script.addProc(module, newIdent(name), impl = nil,
-                          nodeParams, module.sym(returnTy), pkForeign)
+                          nodeParams, module.sym(returnTy), pkForeign,
+                          addToScript = impl != nil)
   result.foreign = impl
 
 proc newModule*(name: string): Module =
   ## Initialize a new module.
   result = Module(name: name)
 
-proc systemModule*(script: Script): Module =
-  ## Create and initialize the ``system`` module. There should be one ``system``
-  ## per Script.
-  result = newModule("system")
+proc initSystemTypes*(module: Module) =
+  ## Add primitive types into the module.
+  ## This should only ever be called when creating the ``system`` module.
   for kind in tkPrimitives:
     let name = $kind
-    result.syms.add(name, genType(kind, name))
-  script.addProc(result, "echo", {"text": "string"}, "void",
-    proc (args: StackView): Value =
-      echo args[0].stringVal)
+    discard module.add(genType(kind, name))
+
+proc initSystemOps*(script: Script, module: Module) =
+  ## Add builtin operations into the module.
+  ## This should only ever be called when creating the ``system`` module.
+
+  # unary operators
+  script.addProc(module, "not", {"x": "bool"}, "bool")
+  script.addProc(module, "+", {"x": "number"}, "number")
+  script.addProc(module, "-", {"x": "number"}, "number")
+
+  # binary operators
+  script.addProc(module, "+", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "-", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "*", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "/", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "==", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "!=", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "<", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "<=", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, ">", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, ">=", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "==", {"a": "bool", "b": "bool"}, "bool")
+  script.addProc(module, "!=", {"a": "bool", "b": "bool"}, "bool")
 
 #--
 # Code generation
@@ -202,18 +284,12 @@ proc initCodeGen*(script: Script, module: Module, chunk: Chunk,
   result = CodeGen(script: script, module: module, chunk: chunk,
                    isToplevel: isToplevel)
 
-proc error(node: Node, msg: string) =
-  ## Raise a compile error on the given node.
-  raise (ref RodError)(kind: reCompile,
-                       file: node.file,
-                       ln: node.ln, col: node.col,
-                       msg: fmt"{node.file}({node.ln}, {node.col}): {msg}")
-
 template genGuard(body) =
   ## Wraps ``body`` in a "guard" used for code generation. The guard sets the
   ## line information in the target chunk. This is a helper used by {.codegen.}.
-  gen.chunk.ln = node.ln
-  gen.chunk.col = node.col
+  when declared(node):
+    gen.chunk.ln = node.ln
+    gen.chunk.col = node.col
   body
 
 macro codegen(theProc: untyped): untyped =
@@ -254,10 +330,9 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
   ## Declare a new variable with the given ``name``, of the given ``kind``, with
   ## the given type ``ty``.
   ## If ``isMagic == true``, this will disable some error checks related to
-  ## magic variables (eg. ``result``).
+  ## magic variables (eg. shadowing ``result``).
 
   # check if the variable's name is not ``result`` when in a non-void proc
-  echo (isMagic, gen.isToplevel)
   if not isMagic and not gen.isToplevel and gen.returnTy.tyKind != tkVoid:
     if name.ident == "result":
       name.error("Variable shadows proc's implicit 'result' variable")
@@ -270,15 +345,13 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
     # declare a local
     result.varLocal = true
     result.varStackPos = gen.varCount
-    if name.ident in gen.currentScope.syms:
-      name.error(fmt"'{name.ident}' is already declared in this scope")
-    gen.currentScope.syms.add(name.ident, result)
+    if not gen.currentScope.add(result):
+      name.error(fmt"'{name}' is already declared in this scope")
   else:
     # declare a global
     result.varLocal = false
-    if name.ident in gen.module.syms:
-      name.error(fmt"'{name.ident}' is already declared")
-    gen.module.syms.add(name.ident, result)
+    if not gen.module.add(result):
+      name.error(fmt"'{name}' is already declared")
 
 proc lookup(gen: CodeGen, name: Node): Sym =
   ## Look up the symbol with the given ``name``.
@@ -291,7 +364,7 @@ proc lookup(gen: CodeGen, name: Node): Sym =
     # try to find a global symbol
     return gen.module.syms[name.ident]
   echo gen.scopes
-  name.error(fmt"'{name.ident}' is not declared in the current scope")
+  name.error(fmt"'{name}' is not declared in the current scope")
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -318,10 +391,10 @@ proc popVar(gen: var CodeGen, name: Node) =
       isLocal = false
       break findVar
     # if no variable was found, error out
-    name.error(fmt"Variable '{name.ident}' doesn't exist")
+    name.error(fmt"Variable '{name}' doesn't exist")
   if sym.kind == skLet and sym.varSet:
     # if the variable is 'let' and it's already set, error out
-    name.error(fmt"'{name.ident}' cannot be reassigned")
+    name.error(fmt"'{name}' cannot be reassigned")
   else:
     if isLocal:
       # if it's a local and it's already been set, use popL, otherwise, just
@@ -387,27 +460,77 @@ proc pushConst(node: Node): Sym {.codegen.} =
     result = gen.module.sym"string"
   else: discard
 
+proc findProcOverload(procSym: Sym, params: seq[Sym],
+                      nameNode: Node = nil): Sym {.codegen.} =
+  ## Finds the correct proc overload for ``procSym``, given the parameter types.
+  if procSym.kind == skProc:
+    result = procSym
+  elif procSym.kind == skChoice:
+    for choice in procSym.choices:
+      if choice.kind == skProc:
+        if choice.procParams.len != params.len: continue
+        block checkParams:
+          for i, (_, ty) in choice.procParams:
+            if ty != params[i]: break checkParams
+          result = choice
+    if nameNode != nil and result == nil:
+      var errorMsg = "Type mismatch, got: <"
+      for i, param in params:
+        errorMsg.add($param.name)
+        if i != params.len - 1:
+          errorMsg.add(", ")
+      errorMsg.add(">, but expected one of:")
+      for choice in procSym.choices:
+        errorMsg.add("\n  proc " & $choice.name & "(")
+        for i, (name, ty) in choice.procParams:
+          errorMsg.add($name & ": " & $ty.name)
+          if i != choice.procParams.len - 1:
+            errorMsg.add(", ")
+        errorMsg.add(") -> " & $choice.procReturnTy.name)
+      nameNode.error(errorMsg)
+
+proc callProc(procSym: Sym, params: seq[Node],
+              nameNode: Node = nil): Sym {.codegen.} =
+  ## Generate code that calls a procedure. ``nameNode`` is used for error
+  ## reporting.
+  if procSym.kind == skProc:
+    # push the args onto the stack
+    var argTypes: seq[Sym]
+    for i, param in params:
+      argTypes.add(gen.genExpr(param))
+    # find the overload
+    let theProc = gen.findProcOverload(procSym, argTypes, nameNode)
+    # call the proc
+    gen.chunk.emit(opcCallD)
+    gen.chunk.emit(theProc.procId)
+    result = theProc.procReturnTy
+  elif procSym.kind in skVars:
+    discard # call through reference in variable
+  else:
+    if nameNode != nil: nameNode.error(fmt"'{procSym.name}' is not a proc")
+
 proc prefix(node: Node): Sym {.codegen.} =
   ## Generate instructions for a prefix operator.
   ## TODO: operator overloading.
-  var typeMismatch = false # did a type mismatch occur?
+  var noBuiltin = false # is no builtin operator available?
   let ty = gen.genExpr(node[1]) # generate the operand's code
   if ty == gen.module.sym"number":
     # number operators
     case node[0].ident
     of "+": discard # + is a noop
     of "-": gen.chunk.emit(opcNegN)
-    else: typeMismatch = true # unknown operator
+    else: noBuiltin = true # unknown operator
     result = ty
   elif ty == gen.module.sym"bool":
     # bool operators
     case node[0].ident
     of "not": gen.chunk.emit(opcInvB)
-    else: typeMismatch = true # unknown operator
+    else: noBuiltin = true # unknown operator
     result = ty
-  else: typeMismatch = true
-  if typeMismatch:
-    node.error(fmt"No overload of '{node[0].ident}' available for <{ty.name}>")
+  else: noBuiltin = true
+  if noBuiltin:
+    # TODO: operator overloading
+    node.error(fmt"No overload of '{node[0]}' available for <{ty.name}>")
 
 proc infix(node: Node): Sym {.codegen.} =
   ## Generate instructions for an infix operator.
@@ -450,10 +573,7 @@ proc infix(node: Node): Sym {.codegen.} =
       else: typeMismatch = true
       # bool operators return bools (duh.)
       result = gen.module.sym"bool"
-    else: typeMismatch = true # no operators for given type
-    if typeMismatch:
-      node.error(fmt"No overload of '{node[0].ident}' available for" &
-                 fmt"<{aTy.name}, {bTy.name}>")
+    else: typeMismatch = true # no optimized operators for given type
   else:
     case node[0].ident
     # assignment is special
@@ -555,30 +675,8 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
 
 proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
   ## Generate code for a procedure call.
-  if procSym.kind == skProc:
-    # push ``result`` onto the stack, if applicable
-    if procSym.procReturnTy.tyKind != tkVoid:
-      gen.pushDefault(procSym.procReturnTy)
-    # push the args onto the stack
-    let params = node.children[1..^1]
-    if params.len != procSym.procParams.len:
-      # TODO: make this error message less of a syntactic mess when overloading
-      # is introduced into the language
-      node.error(fmt"Incorrect number of parameters: proc has " &
-                 fmt"{procSym.procParams.len}, provided {params.len}")
-    for i, param in params:
-      let
-        ty = gen.genExpr(param)
-        expectedTy = procSym.procParams[i].ty
-      if ty != expectedTy:
-        node.error(fmt"Type mismatch at argument {i + 1}: " &
-                   fmt"got <{ty.name}>, but expected <{expectedTy.name}>")
-    # call the proc
-    gen.chunk.emit(opcCallD)
-    gen.chunk.emit(procSym.procId)
-    result = procSym.procReturnTy
-  else:
-    discard # call through reference in variable
+  var params = node.children[1..^1]
+  result = gen.callProc(procSym, params, node[0])
 
 proc call(node: Node): Sym {.codegen.} =
   ## Generates code for a nkCall (proc call or object constructor).
@@ -703,23 +801,28 @@ proc genProc(node: Node) {.codegen.} =
     chunk = newChunk()
     procGen = initCodeGen(gen.script, gen.module, chunk, isToplevel = false)
   procGen.returnTy = returnTy
-  # declare the result variable if the proc returns a value
-  procGen.pushScope()
-  if returnTy.tyKind != tkVoid:
-    let resultSym = procGen.declareVar(newIdent("result"), skVar, returnTy,
-                                       isMagic = true)
-    # ``result`` is set by the proc's caller
-    resultSym.varSet = true
   # add the proc's parameters as locals
   # TODO: upvalues
   procGen.pushScope()
   for param in params:
-    procGen.declareVar(param.name, skLet, param.ty)
+    let param = procGen.declareVar(param.name, skLet, param.ty)
+    param.varSet = true # do not let arguments be overwritten
+  # declare ``result`` if applicable
+  if returnTy.tyKind != tkVoid:
+    let resultSym = procGen.declareVar(newIdent("result"), skVar, returnTy,
+                                       isMagic = true)
+    procGen.pushDefault(returnTy)
+    procGen.popVar(newIdent("result"))
   # compile the proc's body
   discard procGen.genBlock(body, isStmt = true)
-  procGen.popScope() # pop the argument scope to remove the args from the stack
-  # finally, return to the calling chunk
-  procGen.chunk.emit(opcReturn)
+  # finally, return ``result`` if applicable
+  if returnTy.tyKind != tkVoid:
+    let resultSym = procGen.lookup(newIdent("result"))
+    procGen.chunk.emit(opcPushL)
+    procGen.chunk.emit(resultSym.varStackPos.uint8)
+    procGen.chunk.emit(opcReturnVal)
+  else:
+    procGen.chunk.emit(opcReturnVoid)
   # we're done with generating the chunk
   theProc.chunk = chunk
 
@@ -815,23 +918,19 @@ proc genReturn(node: Node) {.codegen.} =
   ## Generate code for a ``return`` statement.
   if gen.isToplevel:
     node.error("'return' can only be used inside a proc")
-  # discard the proc's variables except ``result``
-  var varCount = 0
-  for scope in gen.scopes[1..^1]:
-    # we start at scope 1, because scope 0 contains the ``result`` variable
-    inc(varCount, scope.varCount)
-  gen.chunk.emit(opcDiscard)
-  gen.chunk.emit(varCount.uint8)
-  # if we return a value, set ``result`` to that value
-  if node[1].kind != nkEmpty:
-    let valTy = gen.genExpr(node[1])
+  if node[0].kind == nkEmpty:
+    let resultSym = gen.lookup(newIdent("result"))
+    gen.chunk.emit(opcPushL)
+    gen.chunk.emit(resultSym.varStackPos.uint16)
+  else:
+    let valTy = gen.genExpr(node[0])
     if valTy != gen.returnTy:
-      node[1].error(fmt"Type mismatch: got <{valTy.name}>, but expected " &
-                    fmt"<{gen.returnTy.name}>")
-    gen.popVar(newIdent("result"))
-  # jump to the end of the proc
-  gen.chunk.emit(opcJumpFwd)
-  gen.returns.add(gen.chunk.emitHole(2))
+      node.error(fmt"Type mismatch: got <{valTy}>, " &
+                 fmt"but proc returns <{gen.returnTy}>")
+  if gen.returnTy.tyKind != tkVoid:
+    gen.chunk.emit(opcReturnVal)
+  else:
+    gen.chunk.emit(opcReturnVoid)
 
 proc genObject(node: Node) {.codegen.} =
   ## Process an object declaration, and add the new type into the current
@@ -851,10 +950,12 @@ proc genObject(node: Node) {.codegen.} =
                           (id: ty.objectFields.len, name: name, ty: fieldsTy))
   if gen.scopes.len > 0:
     # local type
-    gen.currentScope.syms.add(ty.name.ident, ty)
+    if not gen.currentScope.add(ty):
+      node[0].error(fmt"'{node[0]}' is already declared in this scope")
   else:
     # global type
-    gen.module.syms.add(ty.name.ident, ty)
+    if not gen.module.add(ty):
+      node[0].error(fmt"'{node[0]}' is already declared")
 
 proc genStmt(node: Node) {.codegen.} =
   ## Generate code for a statement.

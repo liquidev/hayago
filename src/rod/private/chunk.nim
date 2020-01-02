@@ -8,6 +8,7 @@ import value
 
 type
   Opcode* = enum ## An opcode, used for execution.
+    opcNoop = "noop"
     # Stack
     opcPushTrue = "pushTrue"
     opcPushFalse = "pushFalse"
@@ -34,7 +35,7 @@ type
     opcEqB = "eqB" ## Equal bools
     opcEqN = "eqN" ## Equal numbers
     opcLessN = "lessN" ## Number less than
-    opcGreaterN = "lessEqN" ## Number greater than
+    opcGreaterN = "greaterN" ## Number greater than
     # Execution
     opcJumpFwd = "jumpFwd" ## Jump forward
     opcJumpFwdT = "jumpFwdT" ## Jump forward if true
@@ -42,7 +43,8 @@ type
     opcJumpBack = "jumpBack" ## Jump backward
     opcCallD = "callD" ## Call direct
     opcCallR = "callR" ## Call indirect
-    opcReturn = "return" ## Return from proc
+    opcReturnVal = "returnVal" ## Return value from proc
+    opcReturnVoid = "returnVoid" ## Return void from proc
     opcHalt = "halt"
 
   Script* = ref object ## A complete rod script.
@@ -92,9 +94,10 @@ proc getString*(chunk: var Chunk, str: string): uint16 =
     result = chunk.strings.find(str).uint16
 
 proc emit*(chunk: var Chunk, opc: Opcode) =
-  ## Emit an opcode.
-  chunk.addLineInfo(1)
-  chunk.code.add(opc.uint8)
+  ## Emit an opcode. This ignores noop opcodes.
+  if opc != opcNoop:
+    chunk.addLineInfo(1)
+    chunk.code.add(opc.uint8)
 
 proc emit*(chunk: var Chunk, u8: uint8) =
   ## Emit a ``uint8``.

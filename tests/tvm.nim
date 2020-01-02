@@ -7,6 +7,7 @@ import rod/private/chunk
 import rod/private/codegen
 import rod/private/disassembler
 import rod/private/vm
+import rod/private/rodlib
 
 template benchmark(name, body) =
   let t0 = epochTime()
@@ -31,13 +32,13 @@ template run(input: string) =
     var
       main = newChunk()
       script = newScript(main)
-      system = script.systemModule()
+      system = script.modSystem()
       module = newModule("testcase")
       cp = initCodeGen(script, module, main)
     module.load(system)
     cp.genScript(ast)
-  echo ast
-  echo module
+  # echo ast
+  # echo module
   echo `$`(script, input)
   var vm = newVm()
   benchmark("runtime"):
@@ -49,5 +50,10 @@ suite "VM":
   test "hello world":
     run("""
       echo("Hello, world!")
+    """)
+  test "variables":
+    run("""
+      var x = 2
+      var y = 4
     """)
 

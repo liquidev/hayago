@@ -48,7 +48,7 @@ proc disassemble*(chunk: Chunk, input = ""): string =
     of opcPushNil, opcCallD:
       line.add($chunk.getU16(pc + 1))
       inc(pc, 3)
-    of opcPushL, opcPopL, opcConstrObj, opcPushF, opcPopF, opcDiscard:
+    of opcPushL, opcPopL, opcPushF, opcPopF, opcDiscard:
       line.add($chunk.getU8(pc + 1))
       inc(pc, 2)
     of opcJumpFwd, opcJumpFwdF, opcJumpFwdT, opcJumpBack:
@@ -59,12 +59,16 @@ proc disassemble*(chunk: Chunk, input = ""): string =
       else:
         line.add(toHex(pc - chunk.getU16(pc + 1).int, 8))
       inc(pc, 3)
+    of opcConstrObj:
+      line.add($chunk.getU16(pc + 1) & "[" & $chunk.getU8(pc + 3) & "]")
+      inc(pc, 4)
     of opcPushTrue, opcPushFalse,
        opcInvB, opcEqB,
        opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
        opcEqN, opcLessN, opcGreaterN,
        opcCallR,
-       opcReturn, opcHalt: inc(pc, 1)
+       opcReturnVal, opcReturnVoid,
+       opcNoop, opcHalt: inc(pc, 1)
     if inputLine != "":
       line = alignLeft(line, 40) & inputLine
     line.add('\n')
