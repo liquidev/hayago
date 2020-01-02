@@ -30,21 +30,20 @@ template run(input: string) =
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
     var
+      # script
       main = newChunk()
       script = newScript(main)
+      # modules
       system = script.modSystem()
       module = newModule("testcase")
-      cp = initCodeGen(script, module, main)
+      # codegen
+      gen = initCodeGen(script, module, main)
     module.load(system)
-    cp.genScript(ast)
-  # echo ast
-  # echo module
+    gen.genScript(ast)
   echo `$`(script, input)
   var vm = newVm()
   benchmark("runtime"):
     discard vm.interpret(script, main)
-  benchmark("nim runtime"):
-    echo "Hello, world!"
 
 suite "VM":
   test "hello world":
@@ -55,5 +54,35 @@ suite "VM":
     run("""
       var x = 2
       var y = 4
+    """)
+  test "if statements":
+    run("""
+      var x = true
+      if x {
+        echo("got true")
+      }
+      var y = false
+      if y {
+        echo("error")
+      } elif not y {
+        echo("success")
+      }
+      var z = 2
+      if z < 0 {
+        echo("negative")
+      } elif z == 0 {
+        echo("zero")
+      } elif z > 0 {
+        echo("positive")
+      }
+      echo("if statements done, no stack corruption")
+    """)
+  test "while loops":
+    run("""
+      var x = 0
+      while x < 20 {
+        echo(x)
+        x = x + 1
+      }
     """)
 

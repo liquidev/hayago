@@ -120,6 +120,7 @@ proc canAdd(choice, sym: Sym): bool =
   ## Tests if ``sym`` can be added into ``choice``. Refer to ``add``
   ## documentation below for details.
   assert choice.kind == skChoice
+  assert sym.kind != skChoice, "an skChoice is not recursive"
   case sym.kind
   of skVars:
     for other in choice.choices:
@@ -130,6 +131,7 @@ proc canAdd(choice, sym: Sym): bool =
       if other.kind == skType: return false
     result = true
   of skProc:
+    result = true
     for other in choice.choices:
       if other.kind == skProc:
         if sym.procParams.len != other.procParams.len: continue
@@ -363,7 +365,6 @@ proc lookup(gen: CodeGen, name: Node): Sym =
   if name.ident in gen.module.syms:
     # try to find a global symbol
     return gen.module.syms[name.ident]
-  echo gen.scopes
   name.error(fmt"'{name}' is not declared in the current scope")
 
 proc popVar(gen: var CodeGen, name: Node) =
@@ -465,39 +466,44 @@ proc findProcOverload(procSym: Sym, params: seq[Sym],
   ## Finds the correct proc overload for ``procSym``, given the parameter types.
   if procSym.kind == skProc:
     result = procSym
+    for i, (_, ty) in procSym.procParams:
+      if params[i] != ty:
+        result = nil
+        break
   elif procSym.kind == skChoice:
     for choice in procSym.choices:
       if choice.kind == skProc:
         if choice.procParams.len != params.len: continue
         block checkParams:
           for i, (_, ty) in choice.procParams:
-            if ty != params[i]: break checkParams
+            if params[i] != ty: break checkParams
           result = choice
-    if nameNode != nil and result == nil:
-      var errorMsg = "Type mismatch, got: <"
-      for i, param in params:
-        errorMsg.add($param.name)
-        if i != params.len - 1:
+  if nameNode != nil and result == nil:
+    var errorMsg = "Type mismatch, got: <"
+    for i, param in params:
+      errorMsg.add($param.name)
+      if i != params.len - 1:
+        errorMsg.add(", ")
+    errorMsg.add(">, but expected one of:")
+    let overloads =
+      if procSym.kind == skChoice: procSym.choices
+      else: @[procSym]
+    for overload in overloads:
+      errorMsg.add("\n  proc " & $overload.name & "(")
+      for i, (name, ty) in overload.procParams:
+        errorMsg.add($name & ": " & $ty.name)
+        if i != overload.procParams.len - 1:
           errorMsg.add(", ")
-      errorMsg.add(">, but expected one of:")
-      for choice in procSym.choices:
-        errorMsg.add("\n  proc " & $choice.name & "(")
-        for i, (name, ty) in choice.procParams:
-          errorMsg.add($name & ": " & $ty.name)
-          if i != choice.procParams.len - 1:
-            errorMsg.add(", ")
-        errorMsg.add(") -> " & $choice.procReturnTy.name)
-      nameNode.error(errorMsg)
+      errorMsg.add(")")
+      if overload.procReturnTy.tyKind != tkVoid:
+        errorMsg.add(" -> " & $overload.procReturnTy.name)
+    nameNode.error(errorMsg)
 
-proc callProc(procSym: Sym, params: seq[Node],
+proc callProc(procSym: Sym, argTypes: seq[Sym],
               nameNode: Node = nil): Sym {.codegen.} =
   ## Generate code that calls a procedure. ``nameNode`` is used for error
   ## reporting.
-  if procSym.kind == skProc:
-    # push the args onto the stack
-    var argTypes: seq[Sym]
-    for i, param in params:
-      argTypes.add(gen.genExpr(param))
+  if procSym.kind in {skProc, skChoice}:
     # find the overload
     let theProc = gen.findProcOverload(procSym, argTypes, nameNode)
     # call the proc
@@ -519,25 +525,25 @@ proc prefix(node: Node): Sym {.codegen.} =
     case node[0].ident
     of "+": discard # + is a noop
     of "-": gen.chunk.emit(opcNegN)
-    else: noBuiltin = true # unknown operator
+    else: noBuiltin = true # non-builtin operator
     result = ty
   elif ty == gen.module.sym"bool":
     # bool operators
     case node[0].ident
     of "not": gen.chunk.emit(opcInvB)
-    else: noBuiltin = true # unknown operator
+    else: noBuiltin = true # non-builtin operator
     result = ty
   else: noBuiltin = true
   if noBuiltin:
-    # TODO: operator overloading
-    node.error(fmt"No overload of '{node[0]}' available for <{ty.name}>")
+    let procSym = gen.lookup(node[0])
+    result = gen.callProc(procSym, argTypes = @[ty], node[0])
 
 proc infix(node: Node): Sym {.codegen.} =
   ## Generate instructions for an infix operator.
   ## TODO: operator overloading.
   if node[0].ident notin ["=", "or", "and"]:
     # primitive operators
-    var typeMismatch = false # did a type mismatch occur?
+    var noBuiltin = false # is there no built-in operator available?
     let
       aTy = gen.genExpr(node[1]) # generate the left operand's code
       bTy = gen.genExpr(node[2]) # generate the right operand's code
@@ -556,7 +562,7 @@ proc infix(node: Node): Sym {.codegen.} =
       of "<=": gen.chunk.emit(opcGreaterN); gen.chunk.emit(opcInvB)
       of ">": gen.chunk.emit(opcGreaterN)
       of ">=": gen.chunk.emit(opcLessN); gen.chunk.emit(opcInvB)
-      else: typeMismatch = true # unknown operator
+      else: noBuiltin = true # unknown operator
       result =
         case node[0].ident
         # arithmetic operators return numbers
@@ -570,10 +576,13 @@ proc infix(node: Node): Sym {.codegen.} =
       # relational
       of "==": gen.chunk.emit(opcEqB)
       of "!=": gen.chunk.emit(opcEqB); gen.chunk.emit(opcInvB)
-      else: typeMismatch = true
+      else: noBuiltin = true
       # bool operators return bools (duh.)
       result = gen.module.sym"bool"
-    else: typeMismatch = true # no optimized operators for given type
+    else: noBuiltin = true # no optimized operators for given type
+    if noBuiltin:
+      let procSym = gen.lookup(node[0])
+      result = gen.callProc(procSym, argTypes = @[aTy, bTy], node[0])
   else:
     case node[0].ident
     # assignment is special
@@ -675,8 +684,10 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
 
 proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
   ## Generate code for a procedure call.
-  var params = node.children[1..^1]
-  result = gen.callProc(procSym, params, node[0])
+  var argTypes: seq[Sym]
+  for arg in node.children[1..^1]:
+    argTypes.add(gen.genExpr(arg))
+  result = gen.callProc(procSym, argTypes, node[0])
 
 proc call(node: Node): Sym {.codegen.} =
   ## Generates code for a nkCall (proc call or object constructor).
@@ -809,8 +820,7 @@ proc genProc(node: Node) {.codegen.} =
     param.varSet = true # do not let arguments be overwritten
   # declare ``result`` if applicable
   if returnTy.tyKind != tkVoid:
-    let resultSym = procGen.declareVar(newIdent("result"), skVar, returnTy,
-                                       isMagic = true)
+    procGen.declareVar(newIdent("result"), skVar, returnTy, isMagic = true)
     procGen.pushDefault(returnTy)
     procGen.popVar(newIdent("result"))
   # compile the proc's body

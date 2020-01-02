@@ -9,6 +9,7 @@
 ## It intentionally uses very unsafe and low-level practices to provide a
 ## reasonable execution speed.
 
+import strutils
 import tables
 
 import chunk
@@ -32,14 +33,6 @@ proc `{}`[T](x: seq[T], i: BackwardsIndex): ptr UncheckedArray[T] =
 proc read[T](code: ptr UncheckedArray[uint8], offset: int): T =
   ## Read a value of type ``T`` at ``offset`` in ``code``.
   result = cast[ptr T](code[offset].unsafeAddr)[]
-
-proc bottom(stack: Stack): StackView =
-  ## Get a view to the bottom of the stack.
-  result = stack{0}
-
-proc top(stack: Stack): StackView =
-  ## Get a view to the top of the stack.
-  result = stack{^1}
 
 proc peek(stack: Stack): Value =
   ## Peek the value at the top of the stack.
@@ -73,12 +66,13 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
     pc {.vmvar.} = chunk.code{0}
     stackBottom = 0
 
-  # initialization
-
-
   # interpret loop
   while true:
     {.computedGoto.}
+
+    when defined(rodVmWritePcFlow):
+      let relPc = cast[int](pc) - cast[int](chunk.code{0})
+      echo "pc: ", toHex(relPc.BiggestInt, 8)
 
     let opcode = pc[0].Opcode
     inc(pc)
@@ -97,7 +91,11 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
                      pc: pc,
                      stackBottom: stackBottom))
     template restoreFrame() =
+      # discard locals from current frame
+      stack.setLen(stackBottom - 1)
+      # restore the frame
       let frame = callStack.pop()
+      chunk = frame.chunk
       pc = frame.pc
       stackBottom = frame.stackBottom
 
@@ -108,12 +106,14 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
         chunk = theProc.chunk
         pc = chunk.code{0}
         stackBottom = stack.len - theProc.paramCount
+        # the frame is restored by the return(Void|Val) opcode in the proc
       of pkForeign:
         let callResult = theProc.foreign(stack{^theProc.paramCount})
         if theProc.hasResult:
           stack.add(callResult)
 
     case opcode
+    of opcNoop: discard
 
     #--
     # Stack
@@ -226,23 +226,34 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
 
     of opcJumpFwd: # jump forward
       let n = pc.read[:uint16](0).int
-      inc(pc, n)
+      # jump n - 1, because we already advanced 1 after reading the opcode
+      inc(pc, n - 1)
     of opcJumpFwdT: # jump forward if true
-      let n = pc.read[:uint16](0).int
-      inc(pc, n * ord(stack.peek().boolVal))
+      if stack.peek().boolVal:
+        let n = pc.read[:uint16](0).int
+        inc(pc, n - 1)
+      else:
+        inc(pc, sizeof(uint16))
     of opcJumpFwdF: # jump forward if false
-      let n = pc.read[:uint16](0).int
-      inc(pc, n * ord(not stack.peek().boolVal))
+      if not stack.peek().boolVal:
+        let n = pc.read[:uint16](0).int
+        inc(pc, n - 1)
+      else:
+        inc(pc, sizeof(uint16))
     of opcJumpBack: # jump back
       let n = pc.read[:uint16](0).int
-      dec(pc, n)
+      dec(pc, n - 1)
     of opcCallD: # direct call
       let
         id = pc.read[:uint16](0).int
         theProc = script.procs[id]
       doCall(theProc)
     of opcCallR: discard
-    of opcReturn:
+    of opcReturnVal:
+      let retVal = stack.pop()
+      restoreFrame()
+      stack.add(retVal)
+    of opcReturnVoid:
       restoreFrame()
     of opcHalt: break
 

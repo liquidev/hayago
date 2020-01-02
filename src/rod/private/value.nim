@@ -32,6 +32,15 @@ type
   StackView* = ptr UncheckedArray[Value] ## An unsafe view into a Stack.
   ForeignProc* = proc (args: StackView): Value ## A foreign proc.
 
+proc `$`*(value: Value): string =
+  result =
+    case value.typeId
+    of tyNil: "nil"
+    of tyBool: $value.boolVal
+    of tyNumber: $value.numberVal
+    of tyString: $value.stringVal
+    else: "<object>"
+
 proc initValue*(value: bool): Value =
   result = Value(typeId: tyBool, boolVal: value)
 
