@@ -85,7 +85,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
 
     let opcode = pc[0].Opcode
     when defined(rodVmWritePcFlow):
-      let relPc = cast[int](pc) - cast[int](chunk.code{0})
+      template relPc: int = cast[int](pc) - cast[int](chunk.code{0})
       echo "pc: ", toHex(relPc.BiggestInt, 8), " - ", opcode
 
     inc(pc)
@@ -100,10 +100,14 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       stack.push(initValue(expr))
 
     template storeFrame() =
+      when defined(rodVmWritePcFlow):
+        echo "storing frame"
       callStack.add((chunk: chunk,
                      pc: pc,
                      stackBottom: stackBottom))
     template restoreFrame() =
+      when defined(rodVmWritePcFlow):
+        echo "restoring frame"
       # discard locals from current frame
       stack.setLen(stackBottom)
       # restore the frame
@@ -113,12 +117,16 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       stackBottom = frame.stackBottom
 
     template doCall(theProc: Proc) =
+      when defined(rodVmWritePcFlow):
+        echo "entering procedure " & theProc.name
       storeFrame()
       stackBottom = stack.len - theProc.paramCount
       case theProc.kind
       of pkNative:
         chunk = theProc.chunk
         pc = chunk.code{0}
+        when defined(rodVmWritePcFlow):
+          echo "native proc; pc is now ", toHex(relPc.BiggestInt, 8)
         # the frame is restored by the return(Void|Val) opcode in the proc
       of pkForeign:
         let callResult = theProc.foreign(stack{^theProc.paramCount})
@@ -166,8 +174,10 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       inc(pc, sizeof(uint16))
     of opcPushL: # push local
       stack.push(stack[stackBottom + pc[0].int])
+      inc(pc, sizeof(uint8))
     of opcPopL: # pop to local
       stack[stackBottom + pc[0].int] = stack.pop()
+      inc(pc, sizeof(uint8))
 
     # objects
     of opcConstrObj: # construct object
@@ -263,8 +273,8 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       let
         id = pc.read[:uint16](0).int
         theProc = script.procs[id]
-      doCall(theProc)
       inc(pc, sizeof(uint16))
+      doCall(theProc)
     of opcCallR: discard
     of opcReturnVal:
       let retVal = stack.pop()

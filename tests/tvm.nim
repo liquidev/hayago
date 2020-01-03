@@ -14,16 +14,6 @@ template benchmark(name, body) =
   body
   echo name, " took ", (epochTime() - t0) * 1000, "ms"
 
-template dumpTokens(input: string) =
-  var
-    scanner = initScanner(input, "dump.rod")
-    token: Token
-  while true:
-    token = scanner.next()
-    echo token
-    if token.kind == tokEnd:
-      break
-
 template run(input: string) =
   benchmark("compilation"):
     var scanner = initScanner(input, "testcase.rod")
@@ -84,5 +74,18 @@ suite "VM":
       a.y = 4
       echo($a.x)
       echo($a.y)
+    """)
+  test "procedures":
+    run("""
+      proc fac(n: number) -> number {
+        result = 1
+        var i = 1
+        while i <= n {
+          result = result * i
+          i = i + 1
+        }
+      }
+
+      echo($fac(10))
     """)
 
