@@ -4,6 +4,8 @@
 # licensed under the MIT license
 #--
 
+import strutils
+
 const
   ValueSize* = max([
     sizeof(bool),
@@ -38,7 +40,7 @@ proc `$`*(value: Value): string =
     of tyNil: "nil"
     of tyBool: $value.boolVal
     of tyNumber: $value.numberVal
-    of tyString: $value.stringVal
+    of tyString: escape($value.stringVal)
     else: "<object>"
 
 proc initValue*(value: bool): Value =

@@ -130,6 +130,10 @@ proc fillHole*(chunk: var Chunk, hole: int, val: uint16) =
   chunk.code[hole] = uint8(val and 0x00ff)
   chunk.code[hole + 1] = uint8((val and 0xff00) shr 8)
 
+proc patchHole*(chunk: var Chunk, hole: int) =
+  ## Fill a 16-bit hole with the current chunk's length + 1.
+  chunk.fillHole(hole, uint16(chunk.code.len - hole + 1))
+
 proc getOpcode*(chunk: Chunk, i: int): Opcode =
   ## Get the opcode at position ``i``.
   result = chunk.code[i].Opcode

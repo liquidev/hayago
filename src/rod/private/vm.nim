@@ -34,6 +34,19 @@ proc read[T](code: ptr UncheckedArray[uint8], offset: int): T =
   ## Read a value of type ``T`` at ``offset`` in ``code``.
   result = cast[ptr T](code[offset].unsafeAddr)[]
 
+proc push(stack: var Stack, val: Value) =
+  ## Pushes ``val`` onto the stack.
+  stack.add(val)
+  when defined(rodVmWriteStackOps):
+    echo "push ", stack
+
+proc pop(stack: var Stack): Value =
+  ## Pops a value off the stack.
+  result = stack[^1]
+  stack.setLen(stack.len - 1)
+  when defined(rodVmWriteStackOps):
+    echo "pop  ", stack
+
 proc peek(stack: Stack): Value =
   ## Peek the value at the top of the stack.
   result = stack[^1]
@@ -70,21 +83,21 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
   while true:
     {.computedGoto.}
 
+    let opcode = pc[0].Opcode
     when defined(rodVmWritePcFlow):
       let relPc = cast[int](pc) - cast[int](chunk.code{0})
-      echo "pc: ", toHex(relPc.BiggestInt, 8)
+      echo "pc: ", toHex(relPc.BiggestInt, 8), " - ", opcode
 
-    let opcode = pc[0].Opcode
     inc(pc)
 
     template unary(expr) =
       let a {.inject.} = stack.pop()
-      stack.add(initValue(expr))
+      stack.push(initValue(expr))
     template binary(expr) =
       let
         b {.inject.} = stack.pop()
         a {.inject.} = stack.pop()
-      stack.add(initValue(expr))
+      stack.push(initValue(expr))
 
     template storeFrame() =
       callStack.add((chunk: chunk,
@@ -92,7 +105,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
                      stackBottom: stackBottom))
     template restoreFrame() =
       # discard locals from current frame
-      stack.setLen(stackBottom - 1)
+      stack.setLen(stackBottom)
       # restore the frame
       let frame = callStack.pop()
       chunk = frame.chunk
@@ -100,17 +113,18 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       stackBottom = frame.stackBottom
 
     template doCall(theProc: Proc) =
+      storeFrame()
+      stackBottom = stack.len - theProc.paramCount
       case theProc.kind
       of pkNative:
-        storeFrame()
         chunk = theProc.chunk
         pc = chunk.code{0}
-        stackBottom = stack.len - theProc.paramCount
         # the frame is restored by the return(Void|Val) opcode in the proc
       of pkForeign:
         let callResult = theProc.foreign(stack{^theProc.paramCount})
+        restoreFrame()
         if theProc.hasResult:
-          stack.add(callResult)
+          stack.push(callResult)
 
     case opcode
     of opcNoop: discard
@@ -121,20 +135,20 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
 
     # literals
     of opcPushTrue:
-      stack.add(initValue(true))
+      stack.push(initValue(true))
     of opcPushFalse:
-      stack.add(initValue(false))
+      stack.push(initValue(false))
     of opcPushNil:
       let id = pc.read[:uint16](0).TypeId
-      stack.add(initObject(id, nilObject))
+      stack.push(initObject(id, nilObject))
       inc(pc, sizeof(uint16))
     of opcPushN: # push number
       let num = pc.read[:float](0)
-      stack.add(initValue(num))
+      stack.push(initValue(num))
       inc(pc, sizeof(float))
     of opcPushS: # push string
       let id = pc.read[:uint16](0)
-      stack.add(initValue(chunk.strings[id]))
+      stack.push(initValue(chunk.strings[id]))
       inc(pc, sizeof(uint16))
 
     # variables
@@ -142,7 +156,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       let
         id = pc.read[:uint16](0)
         name = chunk.strings[id]
-      stack.add(vm.globals[name])
+      stack.push(vm.globals[name])
       inc(pc, sizeof(uint16))
     of opcPopG: # pop to global
       let
@@ -151,7 +165,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       vm.globals[name] = stack.pop()
       inc(pc, sizeof(uint16))
     of opcPushL: # push local
-      stack.add(stack[stackBottom + pc[0].int])
+      stack.push(stack[stackBottom + pc[0].int])
     of opcPopL: # pop to local
       stack[stackBottom + pc[0].int] = stack.pop()
 
@@ -169,7 +183,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       let
         field = pc[0]
         obj = stack.pop()
-      stack.add(obj.objectVal.fields[field])
+      stack.push(obj.objectVal.fields[field])
       inc(pc, sizeof(uint8))
     of opcPopF: # pop to field
       let
@@ -242,17 +256,18 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
         inc(pc, sizeof(uint16))
     of opcJumpBack: # jump back
       let n = pc.read[:uint16](0).int
-      dec(pc, n - 1)
+      dec(pc, n + 1)
     of opcCallD: # direct call
       let
         id = pc.read[:uint16](0).int
         theProc = script.procs[id]
       doCall(theProc)
+      inc(pc, sizeof(uint16))
     of opcCallR: discard
     of opcReturnVal:
       let retVal = stack.pop()
       restoreFrame()
-      stack.add(retVal)
+      stack.push(retVal)
     of opcReturnVoid:
       restoreFrame()
     of opcHalt: break

@@ -5,13 +5,44 @@
 #--
 
 import macros
-import strformat
+import strutils
 import tables
 
 import chunk
 import common
 import parser
 import value
+
+#--
+# Error messages
+#--
+
+const
+  ErrorFmt = "$1($2, $3): $4"
+  ErrProcRedefinition =
+    "An overload with the given parameter types already exists"
+  ErrShadowResult = "Variable shadows implicit 'result' variable"
+  ErrLocalRedeclaration = "'$1' is already declared in this scope"
+  ErrGlobalRedeclaration = "'$1' is already declared"
+  ErrUndefinedReference = "'$1' is not declared in the current scope"
+  ErrLetReassignment = "'$1' cannot be reassigned"
+  ErrTypeMismatch = "Type mismatch: got <$1>, but expected <$2>"
+  ErrTypeMismatchChoice = "Type mismatch: got <$1>, but expected one of:\n$2"
+  ErrNotAProc = "'$1' is not a proc"
+  ErrInvalidField = "'$1' is not a valid field"
+  ErrNonExistentField = "Field '$1' does not exist"
+  ErrInvalidAssignment = "Cannot assign to '$1'"
+  ErrTypeIsNotAnObject = "'$1' is not an object type"
+  ErrObjectFieldsMustBeInitialized = "All object fields must be initialized"
+  ErrFieldInitMustBeAColonExpr =
+    "Field initializer must be a colon expression: 'a: b'"
+  ErrNoSuchField = "<$1> does not have the field '$2'"
+  ErrDefaultProcParamsUnsupported =
+    "Default proc parameters are not yet supported"
+  ErrValueIsVoid = "Value does not have a valid type"
+  ErrOnlyUsableInALoop = "'$1' can only be used inside a loop"
+  ErrOnlyUsableInAProc = "'$1' can only be used inside a proc"
+  ErrVarMustHaveValue = "Variable must have a value"
 
 #--
 # Compile-time info
@@ -96,7 +127,7 @@ proc `$`(sym: Sym): string =
   of skChoice:
     result = "choice between " & $sym.choices.len & " {"
     for choice in sym.choices:
-      result.add(" " & $choice & ";")
+      result.add(" " & $choice & ",")
     result.add(" }")
 
 proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
@@ -190,7 +221,7 @@ proc error(node: Node, msg: string) =
   raise (ref RodError)(kind: reCompile,
                        file: node.file,
                        ln: node.ln, col: node.col,
-                       msg: fmt"{node.file}({node.ln}, {node.col}): {msg}")
+                       msg: ErrorFmt % [node.file, $node.ln, $node.col, msg])
 
 proc addProc*(script: Script, module: Module, name, impl: Node,
               params: openarray[ProcParam], returnTy: Sym,
@@ -210,7 +241,7 @@ proc addProc*(script: Script, module: Module, name, impl: Node,
   sym.procParams = @params
   sym.procReturnTy = returnTy
   if not module.add(sym):
-    name.error("An overload with the given parameter types already exists")
+    name.error(ErrProcRedefinition)
 
 proc addProc*(script: Script, module: Module, name: string,
               params: openarray[(string, string)], returnTy: string,
@@ -323,8 +354,9 @@ proc pushScope(gen: var CodeGen) =
 
 proc popScope(gen: var CodeGen) =
   ## Pop the top scope, discarding its variables.
-  gen.chunk.emit(opcDiscard)
-  gen.chunk.emit(gen.currentScope.varCount.uint8)
+  if gen.currentScope.varCount > 0:
+    gen.chunk.emit(opcDiscard)
+    gen.chunk.emit(gen.currentScope.varCount.uint8)
   discard gen.scopes.pop()
 
 proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
@@ -337,7 +369,7 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
   # check if the variable's name is not ``result`` when in a non-void proc
   if not isMagic and not gen.isToplevel and gen.returnTy.tyKind != tkVoid:
     if name.ident == "result":
-      name.error("Variable shadows proc's implicit 'result' variable")
+      name.error(ErrShadowResult)
   # create the symbol for the variable
   assert kind in skVars, "The kind must be a variable"
   result = newSym(kind, name)
@@ -348,12 +380,12 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
     result.varLocal = true
     result.varStackPos = gen.varCount
     if not gen.currentScope.add(result):
-      name.error(fmt"'{name}' is already declared in this scope")
+      name.error(ErrLocalRedeclaration % $name)
   else:
     # declare a global
     result.varLocal = false
     if not gen.module.add(result):
-      name.error(fmt"'{name}' is already declared")
+      name.error(ErrGlobalRedeclaration % $name)
 
 proc lookup(gen: CodeGen, name: Node): Sym =
   ## Look up the symbol with the given ``name``.
@@ -365,7 +397,7 @@ proc lookup(gen: CodeGen, name: Node): Sym =
   if name.ident in gen.module.syms:
     # try to find a global symbol
     return gen.module.syms[name.ident]
-  name.error(fmt"'{name}' is not declared in the current scope")
+  name.error(ErrUndefinedReference % $name)
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -392,10 +424,10 @@ proc popVar(gen: var CodeGen, name: Node) =
       isLocal = false
       break findVar
     # if no variable was found, error out
-    name.error(fmt"Variable '{name}' doesn't exist")
+    name.error(ErrUndefinedReference % $name)
   if sym.kind == skLet and sym.varSet:
     # if the variable is 'let' and it's already set, error out
-    name.error(fmt"'{name}' cannot be reassigned")
+    name.error(ErrLetReassignment % $name)
   else:
     if isLocal:
       # if it's a local and it's already been set, use popL, otherwise, just
@@ -479,25 +511,25 @@ proc findProcOverload(procSym: Sym, params: seq[Sym],
             if params[i] != ty: break checkParams
           result = choice
   if nameNode != nil and result == nil:
-    var errorMsg = "Type mismatch, got: <"
+    var paramList = ""
     for i, param in params:
-      errorMsg.add($param.name)
+      paramList.add($param.name)
       if i != params.len - 1:
-        errorMsg.add(", ")
-    errorMsg.add(">, but expected one of:")
+        paramList.add(", ")
+    var overloadList = ""
     let overloads =
       if procSym.kind == skChoice: procSym.choices
       else: @[procSym]
     for overload in overloads:
-      errorMsg.add("\n  proc " & $overload.name & "(")
+      overloadList.add("\n  proc " & $overload.name & "(")
       for i, (name, ty) in overload.procParams:
-        errorMsg.add($name & ": " & $ty.name)
+        overloadList.add($name & ": " & $ty.name)
         if i != overload.procParams.len - 1:
-          errorMsg.add(", ")
-      errorMsg.add(")")
+          overloadList.add(", ")
+      overloadList.add(")")
       if overload.procReturnTy.tyKind != tkVoid:
-        errorMsg.add(" -> " & $overload.procReturnTy.name)
-    nameNode.error(errorMsg)
+        overloadList.add(" -> " & $overload.procReturnTy.name)
+    nameNode.error(ErrTypeMismatchChoice % [paramList, overloadList])
 
 proc callProc(procSym: Sym, argTypes: seq[Sym],
               nameNode: Node = nil): Sym {.codegen.} =
@@ -513,7 +545,7 @@ proc callProc(procSym: Sym, argTypes: seq[Sym],
   elif procSym.kind in skVars:
     discard # call through reference in variable
   else:
-    if nameNode != nil: nameNode.error(fmt"'{procSym.name}' is not a proc")
+    if nameNode != nil: nameNode.error(ErrNotAProc % $procSym.name)
 
 proc prefix(node: Node): Sym {.codegen.} =
   ## Generate instructions for a prefix operator.
@@ -596,13 +628,11 @@ proc infix(node: Node): Sym {.codegen.} =
           # if the variable's type matches the type of the value, we're ok
           gen.popVar(node[1])
         else:
-          node.error(fmt"Type mismatch: cannot assign value of type " &
-                     fmt"<{valTy.name}> to a variable of type " &
-                     fmt"<{sym.varTy.name}>")
+          node.error(ErrTypeMismatch % [$valTy.name, $sym.varTy.name])
       of nkDot: # to an object field
         if node[1][1].kind != nkIdent:
           # object fields are always identifiers
-          node[1][1].error(fmt"{node[1][1]} is not a valid object field")
+          node[1][1].error(ErrInvalidField % $node[1][1])
         let
           typeSym = gen.genExpr(node[1][0]) # generate the receiver's code
           fieldName = node[1][1].ident
@@ -611,13 +641,12 @@ proc infix(node: Node): Sym {.codegen.} =
           # assign the field if it's valid, using popF
           let field = typeSym.objectFields[fieldName]
           if valTy != field.ty:
-            node[2].error(fmt"Type mismatch: field has type <{field.ty.name}>" &
-                          fmt" but got <{valTy.name}>")
+            node[2].error(ErrTypeMismatch % [$field.ty.name, $valTy.name])
           gen.chunk.emit(opcPopF)
           gen.chunk.emit(field.id.uint8)
         else:
-          node[1].error(fmt"Field '{fieldName}' doesn't exist")
-      else: node.error(fmt"Cannot assign to '{($node.kind)[2..^1]}'")
+          node[1].error(ErrNonExistentField % fieldName)
+      else: node.error(ErrInvalidAssignment % $node)
       # assignment doesn't return anything
       result = gen.module.sym"void"
     # ``or`` and ``and`` are special, because they're short-circuiting.
@@ -631,9 +660,9 @@ proc infix(node: Node): Sym {.codegen.} =
       gen.chunk.emit(opcDiscard)
       gen.chunk.emit(1'u8)
       let bTy = gen.genExpr(node[2]) # generate the right-hand side
-      if aTy != gen.module.sym"bool" or bTy != gen.module.sym"bool":
-        node.error("Operands of 'or' must be booleans")
-      gen.chunk.fillHole(hole, uint16(gen.chunk.code.len - hole + 1))
+      if aTy.tyKind != tkBool: node[1].error(ErrTypeMismatch % [$aTy, "bool"])
+      if bTy.tyKind != tkBool: node[2].error(ErrTypeMismatch % [$bTy, "bool"])
+      gen.chunk.patchHole(hole)
       result = gen.module.sym"bool"
     of "and": # ``and``
       let aTy = gen.genExpr(node[1]) # generate the left-hand side
@@ -644,9 +673,9 @@ proc infix(node: Node): Sym {.codegen.} =
       gen.chunk.emit(opcDiscard)
       gen.chunk.emit(1'u8)
       let bTy = gen.genExpr(node[2]) # generate the right-hand side
-      if aTy != gen.module.sym"bool" or bTy != gen.module.sym"bool":
-        node.error("Operands of 'and' must be booleans")
-      gen.chunk.fillHole(hole, uint16(gen.chunk.code.len - hole + 1))
+      if aTy.tyKind != tkBool: node[1].error(ErrTypeMismatch % [$aTy, "bool"])
+      if bTy.tyKind != tkBool: node[2].error(ErrTypeMismatch % [$bTy, "bool"])
+      gen.chunk.patchHole(hole)
       result = gen.module.sym"bool"
     else: discard
 
@@ -654,29 +683,28 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   ## Generate code for an object constructor.
   result = gen.lookup(node[0]) # find the object type that's being constructed
   if result.tyKind != tkObject:
-    node.error(fmt"<{result.name}> is not an object type")
+    node.error(ErrTypeIsNotAnObject % $result.name)
   if node.children.len - 1 != result.objectFields.len:
     # TODO: allow the user to not initialize some fields, and set them to their
     # types' default values instead.
-    node.error("All fields of an object must be initialized")
+    node.error(ErrObjectFieldsMustBeInitialized)
   # collect the initialized fields into a seq with their values and the fields
   # themselves
   var fields: seq[tuple[node: Node, field: ObjectField]]
   fields.setLen(result.objectFields.len)
   for f in node.children[1..^1]:
     if f.kind != nkColon:
-      f.error("Field initializer must be a colon expression 'a: b'")
+      f.error(ErrFieldInitMustBeAColonExpr)
     let name = f[0].ident
     if name notin result.objectFields:
-      f[0].error(fmt"<{result.name}> does not have a field '{name}'")
+      f[0].error(ErrNoSuchField % [$result.name, name])
     let field = result.objectFields[name]
     fields[field.id] = (node: f[1], field: field)
   # iterate the fields and values, and push them onto the stack.
   for (value, field) in fields:
     let ty = gen.genExpr(value)
     if ty != field.ty:
-      node.error(fmt"Type mismatch: field has type <{field.ty.name}>, " &
-                 fmt"but got <{ty.name}>")
+      node.error(ErrTypeMismatch % [$field.ty.name, $ty.name])
   # construct the object
   gen.chunk.emit(opcConstrObj)
   gen.chunk.emit(uint16(tyFirstObject + ty.objectId))
@@ -702,7 +730,7 @@ proc call(node: Node): Sym {.codegen.} =
 proc genGetField(node: Node): Sym {.codegen.} =
   ## Generate code for field access.
   if node[1].kind != nkIdent:
-    node[1].error("{node[1]} is not a valid object field")
+    node[1].error(ErrInvalidField % $node[1])
   let
     typeSym = gen.genExpr(node[0]) # generate the left-hand side
     fieldName = node[1].ident # get the field's name
@@ -713,74 +741,72 @@ proc genGetField(node: Node): Sym {.codegen.} =
     gen.chunk.emit(opcPushF)
     gen.chunk.emit(field.id.uint8)
   else:
-    node.error("<{typeSym.name}> does not have a field '{fieldName}'")
+    node.error(ErrNoSuchField % [$typeSym.name, fieldName])
 
 proc genBlock(node: Node, isStmt: bool): Sym {.codegen.}
 
 proc genIf(node: Node, isStmt: bool): Sym {.codegen.} =
   ## Generate code for an if expression/statement.
-  var
-    pos = 0 # the current position in the node
-    jumpsToEnd: seq[int]
-    ifTy: Sym # the type of the if expression, ``void`` for an if statement
-    hadElse = false # did the if have an else branch?
-  while pos < node.children.len:
-    # iterate through the if statement's nodes
-    if node[pos].kind != nkBlock:
-      # if it's not a block, it must be an ``if`` or ``elif`` branch
-      if gen.genExpr(node[pos]) != gen.module.sym"bool":
-        node[pos].error("'if' condition must be a <bool>")
-      inc(pos)
-      # if the condition is ``false``, jump over to the next branch
-      gen.chunk.emit(opcJumpFwdF)
-      let afterBlock = gen.chunk.emitHole(2)
-      # otherwise, discard the condition and execute the body
+
+  # get some properties about the statement
+  let
+    hasElse = node.children.len mod 2 == 1
+    branches =
+      # separate the else branch from the rest of branches and conditions
+      if hasElse: node.children[0..^2]
+      else: node.children
+  # then, we compile all the branches
+  var jumpsToEnd: seq[int]
+  for i in countup(0, branches.len - 1, 2):
+    # if there was a previous branch, discard its condition
+    if i != 0:
       gen.chunk.emit(opcDiscard)
       gen.chunk.emit(1'u8)
-      let blockTy = gen.genBlock(node[pos], isStmt)
-      if not isStmt:
-        # if we have an if expression, check if the all branches' types are
-        # the same
-        if ifTy == nil:
-          ifTy = blockTy
-        else:
-          if blockTy != ifTy:
-            node[pos].error(fmt"Type mismatch: <{ifTy.name}> expected, but " &
-                            fmt"got <{blockTy.name}>")
-      if pos < node.children.len - 1:
-        # if this isn't the last branch, add a jump to the end of the expression
-        gen.chunk.emit(opcJumpFwd)
-        jumpsToEnd.add(gen.chunk.emitHole(2))
-      inc(pos)
-      gen.chunk.fillHole(afterBlock,
-                         uint16(gen.chunk.code.len - afterBlock + 1))
-    else:
-      # if it's a block, we're in an ``else`` branch
-      # first, we discard the condition
-      gen.chunk.emit(opcDiscard)
-      gen.chunk.emit(1'u8)
-      # and we execute the body
-      let blockTy = gen.genBlock(node[pos], isStmt)
-      if not isStmt:
-        # we need to check the branch's type if we're compiling an if expression
-        if blockTy != ifTy:
-          node[pos].error(fmt"Type mismatch: <{ifTy.name}> expected, but got " &
-                          fmt"<{blockTy.name}>")
-      hadElse = true
-      inc(pos)
-  if not hadElse:
-    # if we didn't have an else branch, we'll need to discard the condition from
-    # the last ``if``/``elif`` branch
+    let
+      # first, we compile the condition and check its type
+      cond = branches[i]
+      condTy = gen.genExpr(cond)
+    if condTy.tyKind != tkBool:
+      cond.error(ErrTypeMismatch % [$condTy.name, "bool"])
+    # if the condition is false, jump past the branch
+    gen.chunk.emit(opcJumpFwdF)
+    let afterBranch = gen.chunk.emitHole(2)
+    # otherwise, discard the condition's value and execute the body
     gen.chunk.emit(opcDiscard)
     gen.chunk.emit(1'u8)
-  # after that, we fill all the jumps to the end
-  for hole in jumpsToEnd:
-    gen.chunk.fillHole(hole, uint16(gen.chunk.code.len - hole + 1))
-  result =
-    # statements are ``void``
-    if isStmt: gen.module.sym"void"
-    # expressions have a type, so return the if's type.
-    else: ifTy
+    let
+      branch = branches[i + 1]
+      branchTy = gen.genBlock(branch, isStmt)
+    # if the ``if`` is an expression, check its type
+    if not isStmt:
+      if result == nil: result = branchTy
+      else:
+        if branchTy != result:
+          branch.error(ErrTypeMismatch % [$branchTy.name, $result.name])
+    # after the block is done, jump to the end of the whole statement
+    gen.chunk.emit(opcJumpFwd)
+    jumpsToEnd.add(gen.chunk.emitHole(2))
+    # we also need to fill the previously created jump after the branch
+    gen.chunk.patchHole(afterBranch)
+    # after the branch, there's another branch or the end of the if statement
+  # if we have an else branch, we need to compile it, too
+  if hasElse:
+    # discard the last branch's condition
+    gen.chunk.emit(opcDiscard)
+    gen.chunk.emit(1'u8)
+    # compile the branch
+    let
+      elseBranch = node[^1]
+      elseTy = gen.genBlock(elseBranch, isStmt)
+    # check its type
+    if not isStmt and elseTy != result:
+      elseBranch.error(ErrTypeMismatch % [$elseTy.name, $result.name])
+  # finally, fill the gaps
+  for jmp in jumpsToEnd:
+    gen.chunk.patchHole(jmp)
+  # if it's a statement, its type is void
+  if isStmt:
+    result = gen.module.sym"void"
 
 proc genProc(node: Node) {.codegen.} =
   ## Process and compile a procedure.
@@ -794,7 +820,7 @@ proc genProc(node: Node) {.codegen.} =
   var params: seq[ProcParam]
   for defs in formalParams.children[1..^1]:
     if defs[^1].kind != nkEmpty:
-      defs[^1].error("Default proc parameters are not yet supported") # TODO
+      defs[^1].error(ErrDefaultProcParamsUnsupported) # TODO
     let ty = gen.lookup(defs[^2])
     for name in defs.children[0..^3]:
       params.add((name, ty))
@@ -855,7 +881,7 @@ proc genExpr(node: Node): Sym {.codegen.} =
     result = gen.call(node)
   of nkIf: # if expressions
     result = gen.genIf(node, isStmt = false)
-  else: node.error("Value does not have a valid type")
+  else: node.error(ErrValueIsVoid)
 
 proc genWhile(node: Node) {.codegen.} =
   ## Generates code for a while loop.
@@ -871,8 +897,9 @@ proc genWhile(node: Node) {.codegen.} =
     else: return # while false is a noop
   if not isWhileTrue:
     # if it's not a while true loop, execute the condition
-    if gen.genExpr(node[0]) != gen.module.sym"bool":
-      node[0].error("'while' condition must be a <bool>")
+    let condTy = gen.genExpr(node[0])
+    if condTy.tyKind != tkBool:
+      node[0].error(ErrTypeMismatch % [$condTy.name, "bool"])
     # if it's false, jump over the loop's body
     gen.chunk.emit(opcJumpFwdF)
     afterLoop = gen.chunk.emitHole(2)
@@ -887,17 +914,17 @@ proc genWhile(node: Node) {.codegen.} =
   gen.chunk.emit(uint16(gen.chunk.code.len - beforeLoop - 1))
   if not isWhileTrue:
     # if it wasn't a while true, we need to fill in the hole after the loop
-    gen.chunk.fillHole(afterLoop, uint16(gen.chunk.code.len - afterLoop + 1))
+    gen.chunk.patchHole(afterLoop)
   for brk in gen.loops[^1].breaks:
     # we also need to fill any breaks
-    gen.chunk.fillHole(brk, uint16(gen.chunk.code.len - brk + 1))
+    gen.chunk.patchHole(brk)
   # we're now done with the loop.
   discard gen.loops.pop()
 
 proc genBreak(node: Node) {.codegen.} =
   ## Generate code for a ``break`` statement.
   if gen.loops.len < 1:
-    node.error("'break' can only be used in a loop")
+    node.error(ErrOnlyUsableInALoop % "break")
   let loop = gen.loops[^1]
   # discard the loop's variables
   var varCount = 0
@@ -912,7 +939,7 @@ proc genBreak(node: Node) {.codegen.} =
 proc genContinue(node: Node) {.codegen.} =
   ## Generate code for a ``continue`` statement.
   if gen.loops.len < 1:
-    node.error("'continue' can only be used in a loop")
+    node.error(ErrOnlyUsableInALoop % "continue")
   let loop = gen.loops[^1]
   # discard the loop's variables
   var varCount = 0
@@ -927,7 +954,7 @@ proc genContinue(node: Node) {.codegen.} =
 proc genReturn(node: Node) {.codegen.} =
   ## Generate code for a ``return`` statement.
   if gen.isToplevel:
-    node.error("'return' can only be used inside a proc")
+    node.error(ErrOnlyUsableInAProc % "return")
   if node[0].kind == nkEmpty:
     let resultSym = gen.lookup(newIdent("result"))
     gen.chunk.emit(opcPushL)
@@ -935,8 +962,7 @@ proc genReturn(node: Node) {.codegen.} =
   else:
     let valTy = gen.genExpr(node[0])
     if valTy != gen.returnTy:
-      node.error(fmt"Type mismatch: got <{valTy}>, " &
-                 fmt"but proc returns <{gen.returnTy}>")
+      node.error(ErrTypeMismatch % [$valTy.name, $gen.returnTy.name])
   if gen.returnTy.tyKind != tkVoid:
     gen.chunk.emit(opcReturnVal)
   else:
@@ -961,11 +987,11 @@ proc genObject(node: Node) {.codegen.} =
   if gen.scopes.len > 0:
     # local type
     if not gen.currentScope.add(ty):
-      node[0].error(fmt"'{node[0]}' is already declared in this scope")
+      node[0].error(ErrLocalRedeclaration % [$node[0]])
   else:
     # global type
     if not gen.module.add(ty):
-      node[0].error(fmt"'{node[0]}' is already declared")
+      node[0].error(ErrGlobalRedeclaration % [$node[0]])
 
 proc genStmt(node: Node) {.codegen.} =
   ## Generate code for a statement.
@@ -975,7 +1001,7 @@ proc genStmt(node: Node) {.codegen.} =
       if decl[^1].kind == nkEmpty:
         # TODO: if the type was specified, set the value to the default value of
         # the given type
-        decl[^1].error("Variable must have a value")
+        decl[^1].error(ErrVarMustHaveValue)
       var valTy: Sym
       for name in decl.children[0..^3]:
         # generate the value
@@ -991,7 +1017,7 @@ proc genStmt(node: Node) {.codegen.} =
         # if an explicit type was specified, check if the value's type matches
         let expectedTy = gen.lookup(decl[^2])
         if valTy != expectedTy:
-          decl[^1].error("Value does not match the specified type")
+          decl[^1].error(ErrTypeMismatch % [$valTy.name, $expectedTy.name])
   of nkBlock: discard gen.genBlock(node, true) # block statement
   of nkIf: discard gen.genIf(node, true) # if statement
   of nkWhile: gen.genWhile(node) # while loop
@@ -1011,6 +1037,8 @@ proc genStmt(node: Node) {.codegen.} =
 proc genBlock(node: Node, isStmt: bool): Sym {.codegen.} =
   ## Generate a block of code.
 
+  echo (gen.chunk.ln, gen.chunk.col)
+  echo node.treeRepr
   # every block creates a new scope
   gen.pushScope()
   for i, s in node.children:

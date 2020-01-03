@@ -57,31 +57,17 @@ suite "VM":
     """)
   test "if statements":
     run("""
-      var x = true
-      if x {
-        echo("got true")
-      }
-      var y = false
-      if y {
-        echo("error")
-      } elif not y {
-        echo("success")
-      }
-      var z = 2
-      if z < 0 {
-        echo("negative")
-      } elif z == 0 {
-        echo("zero")
-      } elif z > 0 {
-        echo("positive")
-      }
+      let y = 2
+      if y < 0 { echo("negative") }
+      elif y == 0 { echo("zero") }
+      elif y > 0 { echo("positive") }
       echo("if statements done, no stack corruption")
     """)
   test "while loops":
     run("""
-      var x = 0
-      while x < 20 {
-        echo(x)
+      var x = 1
+      while x <= 20 {
+        echo($x)
         x = x + 1
       }
     """)
