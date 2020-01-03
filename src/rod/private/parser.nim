@@ -282,7 +282,7 @@ proc parseCommaList(scan: var Scanner, start, term: static TokenKind,
   result = true
 
 proc parseProcHead(anon: bool, name, formalParams: var Node) {.rule.} =
-  ## Parse a procedure header.
+  ## Parse a procedure header..treeRepr
   # anonProcHead <- commaList('(', ')', identDefs) -> type
   # procHead <- Ident commaList('(', ')', identDefs) -> type
   if not anon:
@@ -322,7 +322,7 @@ proc parsePrefix(token: Token): Node {.rule.} =
   of tokString: result = newStringLit(token.stringVal)
   of tokIdent: result = newIdent(token.ident)
   of tokOperator: result = newTree(nkPrefix, newIdent(token.operator),
-                                   parsePrefix(scan, scan.next()))
+                                   parseExpr(scan, prec = 9))
   of tokLPar: result = parseParExpr(scan)
   of tokIf: result = parseIf(scan)
   of tokProc: result = parseProc(scan, anon = true)
