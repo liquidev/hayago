@@ -88,4 +88,11 @@ suite "VM":
 
       echo($fac(10))
     """)
+    run("""
+      proc printNums(x, max: number) {
+        echo($x)
+        if x < max { printNums(x + 1, max) }
+      }
+      printNums(0, 10)
+    """)
 
