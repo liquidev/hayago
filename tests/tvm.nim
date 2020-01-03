@@ -25,7 +25,6 @@ template dumpTokens(input: string) =
       break
 
 template run(input: string) =
-  dumpTokens(input)
   benchmark("compilation"):
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
@@ -70,5 +69,20 @@ suite "VM":
         echo($x)
         x = x + 1
       }
+    """)
+  test "objects":
+    run("""
+      object Vector {
+        x, y: number
+      }
+
+      var a = Vector(x: 1, y: 2)
+      echo($a.x)
+      echo($a.y)
+
+      a.x = 3
+      a.y = 4
+      echo($a.x)
+      echo($a.y)
     """)
 

@@ -494,7 +494,7 @@ proc pushConst(node: Node): Sym {.codegen.} =
   else: discard
 
 proc findProcOverload(procSym: Sym, params: seq[Sym],
-                      nameNode: Node = nil): Sym {.codegen.} =
+                      errorNode: Node = nil): Sym {.codegen.} =
   ## Finds the correct proc overload for ``procSym``, given the parameter types.
   if procSym.kind == skProc:
     result = procSym
@@ -510,7 +510,7 @@ proc findProcOverload(procSym: Sym, params: seq[Sym],
           for i, (_, ty) in choice.procParams:
             if params[i] != ty: break checkParams
           result = choice
-  if nameNode != nil and result == nil:
+  if errorNode != nil and result == nil:
     var paramList = ""
     for i, param in params:
       paramList.add($param.name)
@@ -529,15 +529,15 @@ proc findProcOverload(procSym: Sym, params: seq[Sym],
       overloadList.add(")")
       if overload.procReturnTy.tyKind != tkVoid:
         overloadList.add(" -> " & $overload.procReturnTy.name)
-    nameNode.error(ErrTypeMismatchChoice % [paramList, overloadList])
+    errorNode.error(ErrTypeMismatchChoice % [paramList, overloadList])
 
 proc callProc(procSym: Sym, argTypes: seq[Sym],
-              nameNode: Node = nil): Sym {.codegen.} =
-  ## Generate code that calls a procedure. ``nameNode`` is used for error
+              errorNode: Node = nil): Sym {.codegen.} =
+  ## Generate code that calls a procedure. ``errorNode`` is used for error
   ## reporting.
   if procSym.kind in {skProc, skChoice}:
     # find the overload
-    let theProc = gen.findProcOverload(procSym, argTypes, nameNode)
+    let theProc = gen.findProcOverload(procSym, argTypes, errorNode)
     # call the proc
     gen.chunk.emit(opcCallD)
     gen.chunk.emit(theProc.procId)
@@ -545,7 +545,7 @@ proc callProc(procSym: Sym, argTypes: seq[Sym],
   elif procSym.kind in skVars:
     discard # call through reference in variable
   else:
-    if nameNode != nil: nameNode.error(ErrNotAProc % $procSym.name)
+    if errorNode != nil: errorNode.error(ErrNotAProc % $procSym.name)
 
 proc prefix(node: Node): Sym {.codegen.} =
   ## Generate instructions for a prefix operator.
@@ -568,7 +568,7 @@ proc prefix(node: Node): Sym {.codegen.} =
   else: noBuiltin = true
   if noBuiltin:
     let procSym = gen.lookup(node[0])
-    result = gen.callProc(procSym, argTypes = @[ty], node[0])
+    result = gen.callProc(procSym, argTypes = @[ty], node)
 
 proc infix(node: Node): Sym {.codegen.} =
   ## Generate instructions for an infix operator.
@@ -614,7 +614,7 @@ proc infix(node: Node): Sym {.codegen.} =
     else: noBuiltin = true # no optimized operators for given type
     if noBuiltin:
       let procSym = gen.lookup(node[0])
-      result = gen.callProc(procSym, argTypes = @[aTy, bTy], node[0])
+      result = gen.callProc(procSym, argTypes = @[aTy, bTy], node)
   else:
     case node[0].ident
     # assignment is special
@@ -715,7 +715,7 @@ proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
   var argTypes: seq[Sym]
   for arg in node.children[1..^1]:
     argTypes.add(gen.genExpr(arg))
-  result = gen.callProc(procSym, argTypes, node[0])
+  result = gen.callProc(procSym, argTypes, node)
 
 proc call(node: Node): Sym {.codegen.} =
   ## Generates code for a nkCall (proc call or object constructor).

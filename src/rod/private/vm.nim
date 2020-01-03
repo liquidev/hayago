@@ -178,6 +178,8 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       var obj = initObject(id, fieldCount)
       for i in 0..<fieldCount:
         obj.objectVal.fields[i] = fields[i]
+      stack.setLen(stack.len - fieldCount)
+      stack.push(obj)
       inc(pc, sizeof(uint16) + sizeof(uint8))
     of opcPushF: # push field
       let
