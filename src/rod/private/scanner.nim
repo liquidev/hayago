@@ -30,8 +30,9 @@ type
     tokWhile = "while"
     tokFor = "for", tokIn = "in"
     tokBreak = "break", tokContinue = "continue", tokReturn = "return"
+    tokYield = "yield"
     tokObject = "object"
-    tokProc = "proc"
+    tokProc = "proc", tokIterator = "iterator"
     # Special
     tokEnd = "(end of input)"
   Token* = object
@@ -84,10 +85,11 @@ const Keywords = {
   "var": tokVar, "let": tokLet,
   "if": tokIf, "elif": tokElif, "else": tokElse,
   "while": tokWhile,
-  "for": tokFor, "in": tokIn,
+  "for": tokFor,
   "break": tokBreak, "continue": tokContinue, "return": tokReturn,
+  "yield": tokYield,
   "object": tokObject,
-  "proc": tokProc
+  "proc": tokProc, "iterator": tokIterator
 }.toTable()
 
 const Utf8Chars = {'\x80'..'\xff'}

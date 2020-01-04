@@ -80,3 +80,14 @@ suite "parser":
       var y = a.x[3]
       a.x = 10
     """)
+  test "iterators":
+    parse("""
+      iterator countup(min, max: number) -> number {
+        var i = min
+        while i <= max {
+          yield i
+          i = i + 1
+        }
+      }
+    """)
+

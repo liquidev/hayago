@@ -15,37 +15,39 @@ import scanner
 type
   NodeKind* = enum
     # building blocks
-    nkEmpty                   # empty node
-    nkScript                  # full script
-    nkBlock                   # a block - {...}
-    nkIdentDefs               # identifier definitions - a, b: s = x
-    nkFormalParams # formal params - (a: s, ...) -> t
+    nkEmpty         # empty node
+    nkScript        # full script
+    nkBlock         # a block - {...}
+    nkIdentDefs     # identifier definitions - a, b: s = x
+    nkFormalParams  # formal params - (a: s, ...) -> t
     # literals
-    nkBool                    # bool literal
-    nkNumber                  # number literal
-    nkString                  # string literal
+    nkBool          # bool literal
+    nkNumber        # number literal
+    nkString        # string literal
     nkIdent # identifier
     # expressions
-    nkPrefix                  # prefix operator - op expr
-    nkInfix                   # infix operator - left op right
-    nkDot                     # dot expression - left.right
-    nkColon                   # colon expression - left: right
-    nkIndex                   # index expression - left[a, ...]
-    nkCall                    # call - left(a, ...)
-    nkIf # if expression - if expr {...} elif expr {...} else {...}
+    nkPrefix        # prefix operator - op expr
+    nkInfix         # infix operator - left op right
+    nkDot           # dot expression - left.right
+    nkColon         # colon expression - left: right
+    nkIndex         # index expression - left[a, ...]
+    nkCall          # call - left(a, ...)
+    nkIf            # if expression - if expr {...} elif expr {...} else {...}
     # types
-    nkProcTy                  # procedure type - proc (...) -> t
+    nkProcTy        # procedure type - proc (...) -> t
     # statements
-    nkVar                     # var declaration - var a = x
-    nkLet                     # let declaration - let a = x
-    nkWhile                   # while loop - while cond {...}
-    nkFor                     # for loop - for x in y {...}
-    nkBreak                   # break statement - break
-    nkContinue                # continue statement - continue
-    nkReturn                  # return statement - return x
+    nkVar           # var declaration - var a = x
+    nkLet           # let declaration - let a = x
+    nkWhile         # while loop - while cond {...}
+    nkFor           # for loop - for x in y {...}
+    nkBreak         # break statement - break
+    nkContinue      # continue statement - continue
+    nkReturn        # return statement - return x
+    nkYield         # yield statement - yield x
     # declarations
-    nkObject                  # object declaration - object name[T, ...] {...}
-    nkProc # procedure declaration - proc name(a: s, ...) -> t {...}
+    nkObject        # object declaration - object name[T, ...] {...}
+    nkProc          # procedure declaration - proc name(a: s, ...) -> t {...}
+    nkIterator      # iterator declaration - iterator name(a: s, ...) -> t {...}
   Node* = ref object          ## An AST node.
     ln*, col*: int            ## Line information used for compile errors
     file*: string
@@ -282,7 +284,7 @@ proc parseCommaList(scan: var Scanner, start, term: static TokenKind,
   result = true
 
 proc parseProcHead(anon: bool, name, formalParams: var Node) {.rule.} =
-  ## Parse a procedure header..treeRepr
+  ## Parse a procedure header.
   # anonProcHead <- commaList('(', ')', identDefs) -> type
   # procHead <- Ident commaList('(', ')', identDefs) -> type
   if not anon:
@@ -415,6 +417,16 @@ proc parseObject(): Node {.rule.} =
   discard scan.next()
   result = newTree(nkObject, fields)
 
+proc parseIterator(): Node {.rule.} =
+  ## Parse an iterator declaration.
+  discard scan.next()
+  var name, formalParams: Node
+  parseProcHead(scan, anon = false, name, formalParams)
+  let body = parseBlock(scan)
+  result = newTree(nkIterator, name,
+                   newEmpty(), # reserved for generic params
+                   formalParams, body)
+
 proc parseBreak(): Node {.rule.} =
   ## Parses a break statement.
   # break <- 'break'
@@ -437,10 +449,16 @@ proc parseReturn(): Node {.rule.} =
   else:
     result.add(newEmpty())
 
+proc parseYield(): Node {.rule.} =
+  ## Parses a yield statement.
+  ## yield <- 'yield' expr
+  discard scan.next()
+  result = newTree(nkYield, parseExpr(scan))
+
 proc parseStmt(): Node {.rule.} =
   ## Parses a statement.
   # stmt <- block |
-  #         var | object | proc |
+  #         var | object | proc | iterator |
   #         while |
   #         break | continue | return |
   #         expr
@@ -449,11 +467,13 @@ proc parseStmt(): Node {.rule.} =
     of tokLBrace: parseBlock(scan)
     of tokVar, tokLet: parseVar(scan)
     of tokProc: discard scan.next(); parseProc(scan, anon = false)
+    of tokIterator: parseIterator(scan)
     of tokObject: parseObject(scan)
     of tokWhile: parseWhile(scan)
     of tokBreak: parseBreak(scan)
     of tokContinue: parseContinue(scan)
     of tokReturn: parseReturn(scan)
+    of tokYield: parseYield(scan)
     else: parseExpr(scan)
 
 proc parseBlock(): Node {.rule.} =
