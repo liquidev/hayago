@@ -59,7 +59,8 @@ is the same as this:
 var helloworld = 1
 ```
 Stropping is rarely required though and should only be used in very specific
-cases described later in the manual.
+cases described later in the manual. Using stropped identifiers where it's not
+required is bad style.
 
 ### Expressions
 
@@ -106,8 +107,8 @@ Variables are a very important part of any language. rod offers two ways of
 declaring them:
 ```rod
 // using var:
-var a, b = 2
-var c, d: string
+var a, b = 2     // both a and b have the value 2
+var c, d: string // both c and d have the type string with its default value ""
 // using let:
 let x, y = 5
 // let z, w: bool - error: 'let' variables must have a value.
@@ -289,37 +290,17 @@ for variable in iterator {
 
 `for` loops support `break` and `continue`, just like `while` loops do.
 
-rod currently doesn't have a way of defining custom iterators, but a few are
-provided in its standard library. First of all, the range iterators:
+Iterators are described later in the manual.
 
+### Implicit `items`
+
+If a `for` loop has exactly one variable, and the for loop's expression `e` is
+not an iterator, the expression is rewritten to `items(e)`. For example, the
+following two loops are equivalent:
 ```rod
-// displays numbers from 0 to 100
-for i in 0..100 {
-  echo(i)
-}
+for x in [1, 2, 3] { echo(x) }        // prints 1.0, 2.0, 3.0
+for x in items([1, 2, 3]) { echo(x) } // also prints 1.0, 2.0, 3.0
 ```
-
-This is the inclusive range operator. It iterates over all numbers in the given
-range, here from 0 to 100.
-
-```rod
-for i in 0..<100 {
-  echo(i)
-}
-```
-
-This exclusive range iterator is similar. The only difference is that it skips
-the last number in the range, so the above example will print numbers
-from 0 to 99 instead of 0 to 100.
-
-Two more range iterators are available:
-
-- `countup(min, max, step)` – counts numbers from `min` to `max`, skipping over
-  `step` of them at a time. `step` may be any number, it doesn't have to be an
-  integer. It *must* however be a positive number; otherwise an exception is
-  raised.
-- `countdown(max, min, step)` – the same as `countup`, but counts in the
-  opposite direction. `step` must also be a positive number.
 
 ## Objects
 
@@ -535,3 +516,118 @@ vectors.
 
 Overloaded unary operators accept one parameter, and binary operators accept
 two parameters. `not` and `$` are unary-only operators.
+
+## Iterators
+
+Iterators are what rod uses for executing `for` loops. An iterator is defined
+like so:
+```rod
+iterator emptyIter() -> number {
+  // body
+}
+```
+An iterator *must* have a return value. An iterator with no return value is a
+compile error.
+
+Iterators have a special statement that can be used in them: the `yield`
+statement. This statement makes the iterator "return" a value. Unlike a regular
+`return`, however, `yield` does not stop the iterator. It simply passes the
+execution back to the calling `for` loop.
+```rod
+iterator count3 -> number {
+  yield 1
+  yield 2
+  yield 3
+}
+
+for x in count3() {
+  echo(x) // outputs 1.0, 2.0, 3.0
+}
+```
+
+Iterators are actually nothing more than inlining facilities. You can imagine
+each `yield` statement in the iterator simply getting substituted by the for
+loop's body. Continuing the previous example, the loop used there is actually
+*roughly* equivalent to the following code:
+```rod
+{ // the iterator's variables
+  let x = 1
+  // the loop's body
+  { echo(x) } }
+{ let x = 2
+  { echo(x) } }
+{ let x = 3
+  { echo(x) } }
+```
+
+Iterators have full scope hygiene, so the following example will fail:
+```rod
+// this is the implementation of countup in the standard library
+iterator countup(min, max: number) -> number {
+  var i = min
+  while i <= max {
+    yield i
+  }
+}
+
+for x in countup(1, 10) {
+  echo(i) // error: 'i' is not defined
+}
+```
+The scopes defined in the iterator are actually completely separate from the
+scopes in the iterator's callsite.
+
+## Coroutines
+
+Coroutines, in many ways, are very similar to iterators. The main difference,
+however, is that they are not just an inlining facility—a coroutine actually has
+a full runtime object representation, and can be paused and resumed at will.
+Also unlike iterators, coroutines can have no return type. In that case, `yield`
+is used without a value.
+
+Coroutines in rod are similar to the ones found in Wren and Lua. The main
+difference, however, is that they use special syntax for coroutine definitions.
+Here's what a coroutine looks like:
+```rod
+coro counter(x: number) -> number {
+  for i in 1..x {
+    yield i
+  }
+}
+```
+
+Calling the coroutine *with no parameters* creates a new `coro` object:
+```rod
+var count = counter()
+echo(count) // <coro>
+```
+As already illustrated by this example, a newly created coroutine does not
+immediately start executing. Instead, it has to be called:
+```rod
+echo(count(10)) // 1
+echo(count(10)) // 2
+```
+The state of the coroutine can be queried with `done`:
+```rod
+while not count.done {
+  echo(count(10))
+}
+```
+The main power of coroutines comes from the fact that different parameters can
+be passed to them each time they're resumed. For instance:
+```rod
+coro echo3(x: number) {
+  echo(x)
+  yield
+  echo(x)
+  yield
+  echo(x)
+}
+
+var echoer = echo3()
+echoer(1) // 1
+echoer(2) // 2
+echoer(3) // 3
+assert(echoer.done)
+```
+
