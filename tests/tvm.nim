@@ -1,3 +1,4 @@
+import tables
 import times
 import unittest
 
@@ -29,7 +30,11 @@ template run(input: string) =
       gen = initCodeGen(script, module, main)
     module.load(system)
     gen.genScript(ast)
-  echo `$`(script, input)
+  echo module
+  echo `$`(script, {
+    "system.rod": RodlibSystemSrc,
+    "testcase.rod": input
+  }.toTable)
   var vm = newVm()
   benchmark("runtime"):
     discard vm.interpret(script, main)
@@ -94,5 +99,11 @@ suite "VM":
         if x < max { printNums(x + 1, max) }
       }
       printNums(0, 10)
+    """)
+  test "iterators":
+    run("""
+      for x in 1..10 {
+        echo($x)
+      }
     """)
 

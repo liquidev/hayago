@@ -52,6 +52,7 @@ type
     mainChunk*: Chunk ## The main chunk of this script.
     typeCount*: int ## The number of types in this script. Used for compilation.
   LineInfo* = tuple ## Line information.
+    file: string
     ln, col: int
     runLength: int
   Chunk* = ref object ## A chunk of bytecode.
@@ -80,7 +81,7 @@ proc addLineInfo*(chunk: var Chunk, n: int) =
        chunk.lineInfo[^1].col == chunk.col:
       inc(chunk.lineInfo[^1].runLength, n)
       return
-  chunk.lineInfo.add((chunk.ln, chunk.col, n))
+  chunk.lineInfo.add((chunk.file, chunk.ln, chunk.col, n))
 
 proc getString*(chunk: var Chunk, str: string): uint16 =
   ## Get a string ID from a chunk, adding it to the chunk's string list if it
@@ -168,7 +169,7 @@ proc getLineInfo*(chunk: Chunk, i: int): LineInfo =
 
 proc newChunk*(): Chunk =
   ## Create a new chunk.
-  result = Chunk()
+  result = Chunk(ln: 1, col: 0)
 
 proc newScript*(main: Chunk): Script =
   ## Create a new script, with the given main chunk.

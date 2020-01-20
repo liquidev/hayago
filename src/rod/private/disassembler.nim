@@ -5,10 +5,11 @@
 #--
 
 import strutils
+import tables
 
 import chunk
 
-proc disassemble*(chunk: Chunk, input = ""): string =
+proc disassemble*(chunk: Chunk, files: Table[string, string]): string =
   ## Disassembles a chunk of bytecode.
   block dumpHex:
     var col = 0
@@ -19,11 +20,13 @@ proc disassemble*(chunk: Chunk, input = ""): string =
         result.add("\n")
         col = 0
     result.add("\n")
-  let inputLines = input.splitLines()
+  var lineTable: Table[string, seq[string]]
+  for file, input in files:
+    lineTable[file] = input.splitLines()
   var
     pc = 0
     lineInfo: LineInfo
-    inputLine = inputLines[0]
+    inputLine = ""
   while pc < chunk.code.len:
     var line = ""
     line.add(pc.toHex(8) & " ")
@@ -35,7 +38,7 @@ proc disassemble*(chunk: Chunk, input = ""): string =
       inputLine = ""
     else:
       line.add(align($li.ln, 4))
-      inputLine = inputLines[li.ln - 1]
+      inputLine = lineTable[li.file][li.ln - 1]
     lineInfo = li
     line.add("  " & alignLeft($opc, 12))
     case opc
@@ -74,15 +77,13 @@ proc disassemble*(chunk: Chunk, input = ""): string =
     line.add('\n')
     result.add(line)
 
-proc `$`*(script: Script, mainChunkSource = ""): string =
+proc `$`*(script: Script, chunkSources = initTable[string, string]()): string =
   ## Stringifies a Script.
-  ## Provide the ``mainChunkSource`` if, and only if, the script was compiled
-  ## from a single source file.
   result = "script:\n  main chunk:\n"
-  result.add(script.mainChunk.disassemble(mainChunkSource).strip.indent(4))
+  result.add(script.mainChunk.disassemble(chunkSources).strip.indent(4))
   for i, p in script.procs:
     result.add("\n  proc " & $i & ": " &
                p.name & " (" & ($p.kind)[2..^1].toLower & ")")
     if p.kind == pkNative:
-      result.add('\n' & p.chunk.disassemble(mainChunkSource).strip.indent(4))
+      result.add('\n' & p.chunk.disassemble(chunkSources).strip.indent(4))
 

@@ -42,6 +42,7 @@ const
   ErrValueIsVoid = "Value does not have a valid type"
   ErrOnlyUsableInALoop = "'$1' can only be used inside a loop"
   ErrOnlyUsableInAProc = "'$1' can only be used inside a proc"
+  ErrOnlyUsableInAnIterator = "'$1' can only be used inside an iterator"
   ErrVarMustHaveValue = "Variable must have a value"
   ErrIterMustHaveYieldType = "Iterator must have a non-void yield type"
   ErrSymKindMismatch = "$1 expected, but got $2"
@@ -51,9 +52,10 @@ const
 #--
 
 type
+  Context = distinct int ## A scope context.
   Scope = ref object of RootObj ## A local scope.
     syms: Table[string, Sym]
-    context: int ## The scope's context. This is used for scope hygiene.
+    context: Context ## The scope's context. This is used for scope hygiene.
   Module* = ref object of Scope ## \
       ## A module representing the global scope of a single source file.
     name: string ## The name of the module.
@@ -63,8 +65,8 @@ type
     skType = "type"
     skProc = "proc"
     skIterator = "iterator"
-    skChoice = "..." ## An overloaded symbol, stores many symbols with \
-                     ## the same name.
+    skChoice = "(...)" ## An overloaded symbol, stores many symbols with \
+                       ## the same name.
   TypeKind = enum ## The kind of a type.
     tkVoid = "void"
     tkBool = "bool"
@@ -109,6 +111,8 @@ const
   skVars = {skVar, skLet}
   skCallable = {skProc, skIterator}
   tkPrimitives = {tkVoid..tkString}
+
+proc `==`(a, b: Context): bool {.borrow.}
 
 proc `$`(params: seq[ProcParam]): string =
   ## Stringify a seq of proc parameters.
@@ -311,7 +315,8 @@ proc initSystemOps*(script: Script, module: Module) =
 type
   ContextAllocator = ref object ## A context allocator. It's shared between \
                                 ## codegen instances.
-    occupied: seq[int]
+    occupied: seq[Context]
+
   Loop = ref object ## Loop metadata.
     before: int ## Offset before the loop. Used by ``continue``.
     breaks: seq[int] ## ``break`` holes.
@@ -327,29 +332,60 @@ type
     chunk: Chunk ## The chunk of code we're generating.
     scopes: seq[Scope] ## Local scopes.
     loops: seq[Loop]
-    ctxAlloc: ContextAllocator ## The context allocator.
-    context: int ## The codegen's scope context. This is used to achieve scope \
-                 ## hygiene.
+    ctxAllocator: ContextAllocator ## The context allocator.
+    context: Context ## The codegen's scope context. This is used to achieve \
+                     ## scope hygiene with iterators.
     case kind: GenKind ## Does this generator handle a module or a proc?
     of gkToplevel: discard
     of gkProc:
       procReturnTy: Sym ## The proc's return type.
     of gkIterator:
-      iterYieldTy: Sym ## The for loop iterator's yield type.
-      iterYieldBody: Node ## The for loop's ``yield`` body.
+      iter: Sym ## The symbol representing the iterator.
+      iterForBody: Node ## The for loop's  body.
+      iterForVar: Node ## The for loop variable's name.
+      iterForCtx: Context ## The for loop's context.
+
+proc allocCtx*(allocator: ContextAllocator): Context =
+  while result in allocator.occupied:
+    result = Context(result.int + 1)
+  allocator.occupied.add(result)
+
+proc freeCtx*(allocator: ContextAllocator, ctx: Context) =
+  let index = allocator.occupied.find(ctx)
+  assert index != -1, "freeCtx called on a context more than one time"
+  allocator.occupied.del(index)
 
 proc initCodeGen*(script: Script, module: Module, chunk: Chunk,
-                  kind = gkToplevel): CodeGen =
+                  kind = gkToplevel,
+                  ctxAllocator: ContextAllocator = nil): CodeGen =
   result = CodeGen(script: script, module: module, chunk: chunk,
+                   kind: kind)
+  if ctxAllocator == nil:
+    result.ctxAllocator = ContextAllocator()
+
+proc clone(gen: CodeGen, kind: GenKind): CodeGen =
+  ## Clone a code generator, using a different kind for the new one.
+  result = CodeGen(script: gen.script, module: gen.module, chunk: gen.chunk,
+                   scopes: gen.scopes, loops: gen.loops,
+                   ctxAllocator: gen.ctxAllocator, context: gen.context,
                    kind: kind)
 
 template genGuard(body) =
   ## Wraps ``body`` in a "guard" used for code generation. The guard sets the
   ## line information in the target chunk. This is a helper used by {.codegen.}.
   when declared(node):
+    let
+      oldFile = gen.chunk.file
+      oldLn = gen.chunk.ln
+      oldCol = gen.chunk.col
+    gen.chunk.file = node.file
     gen.chunk.ln = node.ln
     gen.chunk.col = node.col
   body
+  when declared(node):
+    gen.chunk.file = oldFile
+    gen.chunk.ln = oldLn
+    gen.chunk.col = oldCol
 
 macro codegen(theProc: untyped): untyped =
   ## Wrap ``theProc``'s body in a call to ``genGuard``.
@@ -376,7 +412,7 @@ proc currentScope(gen: CodeGen): Scope =
 
 proc pushScope(gen: var CodeGen) =
   ## Push a new scope.
-  gen.scopes.add(Scope())
+  gen.scopes.add(Scope(context: gen.context))
 
 proc popScope(gen: var CodeGen) =
   ## Pop the top scope, discarding its variables.
@@ -418,7 +454,8 @@ proc lookup(gen: CodeGen, name: Node): Sym =
   if gen.scopes.len > 0:
     # try to find a local symbol
     for i in countdown(gen.scopes.len - 1, 0):
-      if name.ident in gen.scopes[i].syms:
+      if gen.scopes[i].context == gen.context and
+         name.ident in gen.scopes[i].syms:
         return gen.scopes[i].syms[name.ident]
   if name.ident in gen.module.syms:
     # try to find a global symbol
@@ -896,9 +933,10 @@ proc genProc(node: Node) {.codegen.} =
                                  params, returnTy, kind = pkNative)
     chunk = newChunk()
     procGen = initCodeGen(gen.script, gen.module, chunk, gkProc)
+  chunk.file = gen.chunk.file
   procGen.procReturnTy = returnTy
   # add the proc's parameters as locals
-  # TODO: upvalues
+  # TODO: closures and upvalues
   procGen.pushScope()
   for param in params:
     let param = procGen.declareVar(param.name, skLet, param.ty)
@@ -988,12 +1026,40 @@ proc genFor(node: Node) {.codegen.} =
   ## All a ``for`` loop does is it walks the body of the iterator and replaces
   ## any ``yield``s with the for loop's body.
 
+  # this is some really fragile stuff, I wouldn't be surprised if it contains
+  # like, a million bugs
+
   # as of now, only one loop variable is supported
   # this will be changed when tuples are introduced
   let
     loopVarName = node[0]
-    iter = node[1]
+    (iterSym, iterParams) = gen.splitCall(node[1])
     body = node[2]
+  # create a new code generator for the iterator with a separated context
+  var iterGen = gen.clone(gkIterator)
+  iterGen.iterForBody = body
+  iterGen.iterForVar = loopVarName
+  iterGen.iterForCtx = gen.context
+  iterGen.context = gen.ctxAllocator.allocCtx()
+  # generate the arguments passed to the iterator
+  iterGen.pushScope()
+  var argTypes: seq[Sym]
+  for arg in iterParams:
+    argTypes.add(iterGen.genExpr(arg))
+  # resolve the iterator
+  let theIter = gen.findOverload(iterSym, argTypes, node[1])
+  if theIter.kind != skIterator:
+    node[1].error(ErrSymKindMismatch % [$skIterator, $theIter.kind])
+  iterGen.iter = theIter
+  # declare all the variables passed as the iterator's arguments
+  for (name, ty) in theIter.iterParams:
+    var arg = iterGen.declareVar(name, skLet, ty)
+    arg.varSet = true
+  # iterate
+  discard iterGen.genBlock(theIter.impl[3], isStmt = true)
+  # clean up the argument scope and free the scope context
+  iterGen.popScope()
+  gen.ctxAllocator.freeCtx(iterGen.context)
 
 proc genBreak(node: Node) {.codegen.} =
   ## Generate code for a ``break`` statement.
@@ -1030,17 +1096,39 @@ proc genReturn(node: Node) {.codegen.} =
   if gen.kind != gkProc:
     node.error(ErrOnlyUsableInAProc % "return")
   if node[0].kind == nkEmpty:
-    let resultSym = gen.lookup(newIdent("result"))
-    gen.chunk.emit(opcPushL)
-    gen.chunk.emit(resultSym.varStackPos.uint16)
+    if gen.procReturnTy.tyKind != tkVoid:
+      let resultSym = gen.lookup(newIdent("result"))
+      gen.chunk.emit(opcPushL)
+      gen.chunk.emit(resultSym.varStackPos.uint16)
   else:
     let valTy = gen.genExpr(node[0])
     if valTy != gen.procReturnTy:
-      node.error(ErrTypeMismatch % [$valTy.name, $gen.procReturnTy.name])
+      node[0].error(ErrTypeMismatch % [$valTy.name, $gen.procReturnTy.name])
   if gen.procReturnTy.tyKind != tkVoid:
     gen.chunk.emit(opcReturnVal)
   else:
     gen.chunk.emit(opcReturnVoid)
+
+proc genYield(node: Node) {.codegen.} =
+  ## Generate code for a ``yield`` statement.
+  if gen.kind != gkIterator:
+    node.error(ErrOnlyUsableInAnIterator % "yield")
+  # generate the iterator value
+  let valTy = gen.genExpr(node[0])
+  if valTy != gen.iter.iterYieldTy:
+    node[0].error(ErrTypeMismatch % [$valTy.name, $gen.iter.iterYieldTy.name])
+  # switch context to the for loop
+  let myCtx = gen.context
+  gen.context = gen.iterForCtx
+  # create a new scope with the for loop variable
+  gen.pushScope()
+  var loopVar = gen.declareVar(gen.iterForVar, skLet, gen.iter.iterYieldTy)
+  loopVar.varSet = true
+  # run the for loop's body
+  discard gen.genBlock(gen.iterForBody, isStmt = true)
+  # go back to the iterator's context
+  gen.popScope()
+  gen.context = myCtx
 
 proc genObject(node: Node) {.codegen.} =
   ## Process an object declaration, and add the new type into the current
@@ -1086,7 +1174,14 @@ proc genIterator(node: Node) {.codegen.} =
   # fill in the iterator
   iterSym.iterParams = params
   iterSym.iterYieldTy = yieldTy
-
+  if gen.scopes.len > 0:
+    # local iterator
+    if not gen.currentScope.add(iterSym):
+      node[0].error(ErrLocalRedeclaration % [$node[0]])
+  else:
+    # global iterator
+    if not gen.module.add(iterSym):
+      node[0].error(ErrGlobalRedeclaration % [$node[0]])
 
 proc genStmt(node: Node) {.codegen.} =
   ## Generate code for a statement.
@@ -1116,10 +1211,13 @@ proc genStmt(node: Node) {.codegen.} =
   of nkBlock: discard gen.genBlock(node, true) # block statement
   of nkIf: discard gen.genIf(node, true) # if statement
   of nkWhile: gen.genWhile(node) # while loop
+  of nkFor: gen.genFor(node) # for loop
   of nkBreak: gen.genBreak(node) # break statement
   of nkContinue: gen.genContinue(node) # continue statement
   of nkReturn: gen.genReturn(node) # return statement
+  of nkYield: gen.genYield(node) # yield statement
   of nkProc: gen.genProc(node) # procedure declaration
+  of nkIterator: gen.genIterator(node) # iterator declaration
   of nkObject: gen.genObject(node) # object declaration
   else: # expression statement
     let ty = gen.genExpr(node)
