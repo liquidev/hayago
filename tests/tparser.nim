@@ -36,6 +36,10 @@ suite "parser":
     parse("""
       while true {}
     """)
+  test "for loops":
+    parse("""
+      for x in 1..10 {}
+    """)
   test "objects":
     parse("""
       object Test {

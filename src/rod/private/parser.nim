@@ -69,11 +69,25 @@ const LeafNodes = {
   nkEmpty, nkBool, nkNumber, nkString, nkIdent
 }
 
+proc len*(node: Node): int =
+  result = node.children.len
+
 proc `[]`*(node: Node, index: int | BackwardsIndex): Node =
   result = node.children[index]
 
+proc `[]`*(node: Node, slice: HSlice): seq[Node] =
+  result = node.children[slice]
+
 proc `[]=`*(node: Node, index: int | BackwardsIndex, child: Node) =
   node.children[index] = child
+
+iterator items*(node: Node): Node =
+  for child in node.children:
+    yield child
+
+iterator pairs*(node: Node): tuple[i: int, n: Node] =
+  for i, child in node.children:
+    yield (i, child)
 
 proc add*(node, child: Node): Node {.discardable.} =
   node.children.add(child)
@@ -399,6 +413,17 @@ proc parseWhile(): Node {.rule.} =
     body = parseBlock(scan)
   result = newTree(nkWhile, cond, body)
 
+proc parseFor(): Node {.rule.} =
+  ## Parses a for loop.
+  # for <- 'for' Ident 'in' expr block
+  discard scan.next()
+  let loopVar = scan.expect(tokIdent, "Loop variable expected")
+  scan.expectOp("in")
+  let
+    iter = parseExpr(scan)
+    body = parseBlock(scan)
+  result = newTree(nkFor, newIdent(loopVar.ident), iter, body)
+
 proc parseObject(): Node {.rule.} =
   ## Parses an object declaration.
   # identDefs <- commaList(Ident) ':' type
@@ -470,6 +495,7 @@ proc parseStmt(): Node {.rule.} =
     of tokIterator: parseIterator(scan)
     of tokObject: parseObject(scan)
     of tokWhile: parseWhile(scan)
+    of tokFor: parseFor(scan)
     of tokBreak: parseBreak(scan)
     of tokContinue: parseContinue(scan)
     of tokReturn: parseReturn(scan)
