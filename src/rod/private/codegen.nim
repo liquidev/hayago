@@ -1012,6 +1012,9 @@ proc genWhile(node: Node) {.codegen.} =
   if not isWhileTrue:
     # if it wasn't a while true, we need to fill in the hole after the loop
     gen.chunk.patchHole(afterLoop)
+    # ...and pop the condition off the stack after the loop is done
+    gen.chunk.emit(opcDiscard)
+    gen.chunk.emit(1'u8)
   for brk in gen.loops[^1].breaks:
     # we also need to fill any breaks
     gen.chunk.patchHole(brk)

@@ -282,7 +282,10 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       stack.push(retVal)
     of opcReturnVoid:
       restoreFrame()
-    of opcHalt: break
+    of opcHalt:
+      assert stack.len == 0,
+        "stack was not completely emptied. remaining values: " & $stack
+      break
 
 proc newVm*(): Vm =
   ## Create a new VM.
