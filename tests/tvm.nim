@@ -32,11 +32,13 @@ template run(input: string) =
       gen = initCodeGen(script, module, main)
     module.load(system)
     gen.genScript(ast)
-  echo module
-  echo `$`(script, {
-    "system.rod": RodlibSystemSrc,
-    "testcase.rod": input
-  }.toTable)
+  when defined(dumpModule):
+    echo module
+  when defined(dumpDisassembly):
+    echo `$`(script, {
+      "system.rod": RodlibSystemSrc,
+      "testcase.rod": input
+    }.toTable)
   var vm = newVm()
   benchmark("runtime"):
     discard vm.interpret(script, main)
@@ -110,10 +112,11 @@ suite "VM":
     """)
     try:
       run("""
-        for x in 1..10 {
+        for x in 10..15 {
           echo($i)
         }
       """)
+      assert false, "did not catch error; 'i' is visible"
     except RodError as err:
       echo "pass - ", err.msg
 

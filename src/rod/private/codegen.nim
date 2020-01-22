@@ -362,6 +362,7 @@ proc initCodeGen*(script: Script, module: Module, chunk: Chunk,
                    kind: kind)
   if ctxAllocator == nil:
     result.ctxAllocator = ContextAllocator()
+    result.context = result.ctxAllocator.allocCtx()
 
 proc clone(gen: CodeGen, kind: GenKind): CodeGen =
   ## Clone a code generator, using a different kind for the new one.
@@ -451,6 +452,7 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
 
 proc lookup(gen: CodeGen, name: Node): Sym =
   ## Look up the symbol with the given ``name``.
+  echo "looking up <", gen.context.int, ">::", name
   if gen.scopes.len > 0:
     # try to find a local symbol
     for i in countdown(gen.scopes.len - 1, 0):
@@ -1233,8 +1235,6 @@ proc genStmt(node: Node) {.codegen.} =
 proc genBlock(node: Node, isStmt: bool): Sym {.codegen.} =
   ## Generate a block of code.
 
-  echo (gen.chunk.ln, gen.chunk.col)
-  echo node.treeRepr
   # every block creates a new scope
   gen.pushScope()
   for i, s in node:
