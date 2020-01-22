@@ -181,8 +181,9 @@ proc next*(scan: var Scanner): Token =
       operator.add(scan.current)
       scan.advance()
     if operator in Operators:
+      let prec = Operators[operator]
       result = Token(kind: tokOperator,
-                     operator: operator, prec: Operators[operator])
+                     operator: operator.move, prec: prec)
     else:
       case operator
       of ".": result = Token(kind: tokDot)
@@ -218,9 +219,11 @@ proc next*(scan: var Scanner): Token =
     if ident in Keywords:
       result = Token(kind: Keywords[ident])
     elif ident in Operators:
-      result = Token(kind: tokOperator, operator: ident, prec: Operators[ident])
+      let prec = Operators[ident]
+      result = Token(kind: tokOperator, operator: ident.move,
+                     prec: prec)
     else:
-      result = Token(kind: tokIdent, ident: ident)
+      result = Token(kind: tokIdent, ident: ident.move)
   of '`':
     scan.advance()
     var ident = ""

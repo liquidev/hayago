@@ -1,3 +1,4 @@
+import segfaults
 import tables
 import times
 import unittest
@@ -9,6 +10,7 @@ import rod/private/codegen
 import rod/private/disassembler
 import rod/private/vm
 import rod/private/rodlib
+import rod/private/common
 
 template benchmark(name, body) =
   let t0 = epochTime()
@@ -106,4 +108,12 @@ suite "VM":
         echo($x)
       }
     """)
+    try:
+      run("""
+        for x in 1..10 {
+          echo($i)
+        }
+      """)
+    except RodError as err:
+      echo "pass - ", err.msg
 

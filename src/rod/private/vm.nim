@@ -51,22 +51,11 @@ proc peek(stack: Stack): Value =
   ## Peek the value at the top of the stack.
   result = stack[^1]
 
-when defined(c) or defined(cpp) or defined(objc):
-  {.pragma: vmvar, codegenDecl: "register $# $#".}
+template inc[T](point: ptr UncheckedArray[T], offset = 1) =
+  point = cast[ptr UncheckedArray[T]](cast[int](point) + offset)
 
-  template inc[T](point: ptr UncheckedArray[T], offset = 1) =
-    {.emit: [point, "+=", offset, ";"].}
-
-  template dec[T](point: ptr UncheckedArray[T], offset = 1) =
-    {.emit: [point, "-=", offset, ";"].}
-else:
-  {.pragma: vmvar.}
-
-  template inc[T](point: ptr UncheckedArray[T], offset = 1) =
-    point = cast[ptr UncheckedArray[T]](cast[int](point) + offset)
-
-  template dec[T](point: ptr UncheckedArray[T], offset = 1) =
-    point = cast[ptr UncheckedArray[T]](cast[int](point) - offset)
+template dec[T](point: ptr UncheckedArray[T], offset = 1) =
+  point = cast[ptr UncheckedArray[T]](cast[int](point) - offset)
 
 proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
   ## Interpret a chunk of code.
@@ -75,8 +64,8 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
   var
     stack: Stack
     callStack: seq[CallFrame]
-    chunk {.vmvar.} = startChunk
-    pc {.vmvar.} = chunk.code{0}
+    chunk  = startChunk
+    pc = chunk.code{0}
     stackBottom = 0
 
   # interpret loop
