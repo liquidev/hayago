@@ -40,6 +40,8 @@ const
   ErrDefaultProcParamsUnsupported =
     "Default proc parameters are not yet supported"
   ErrValueIsVoid = "Value does not have a valid type"
+  ErrOnlyUsableInABlock =
+    "'$1' can only be used inside a loop or a block statement"
   ErrOnlyUsableInALoop = "'$1' can only be used inside a loop"
   ErrOnlyUsableInAProc = "'$1' can only be used inside a proc"
   ErrOnlyUsableInAnIterator = "'$1' can only be used inside an iterator"
@@ -317,11 +319,13 @@ type
                                 ## codegen instances.
     occupied: seq[Context]
 
-  Loop = ref object ## Loop metadata.
-    before: int ## Offset before the loop. Used by ``continue``.
-    breaks: seq[int] ## ``break`` holes.
-    bottomScope: int ## The bottom scope of the loop, used to discard variables
-                     ## upon ``break`` or ``continue``.
+  FlowBlockKind = enum
+    fbLoopOuter  # outer loop flow block, used by ``break``
+    fbLoopIter   # iteration loop flow block, used by ``continue``
+  FlowBlock = ref object
+    kind: FlowBlockKind
+    breaks: seq[int]
+    bottomScope: int
   GenKind = enum
     gkToplevel
     gkProc
@@ -331,7 +335,7 @@ type
     module: Module ## The global scope.
     chunk: Chunk ## The chunk of code we're generating.
     scopes: seq[Scope] ## Local scopes.
-    loops: seq[Loop]
+    flowBlocks: seq[FlowBlock] ## Flow control blocks.
     ctxAllocator: ContextAllocator ## The context allocator.
     context: Context ## The codegen's scope context. This is used to achieve \
                      ## scope hygiene with iterators.
@@ -367,7 +371,7 @@ proc initCodeGen*(script: Script, module: Module, chunk: Chunk,
 proc clone(gen: CodeGen, kind: GenKind): CodeGen =
   ## Clone a code generator, using a different kind for the new one.
   result = CodeGen(script: gen.script, module: gen.module, chunk: gen.chunk,
-                   scopes: gen.scopes, loops: gen.loops,
+                   scopes: gen.scopes, flowBlocks: gen.flowBlocks,
                    ctxAllocator: gen.ctxAllocator, context: gen.context,
                    kind: kind)
 
@@ -402,9 +406,9 @@ proc varCount(scope: Scope): int =
     if sym.kind in skVars:
       inc(result)
 
-proc varCount(gen: CodeGen): int =
+proc varCount(gen: CodeGen, bottom = 0): int =
   ## Count the number of variables in all of the codegen's scopes.
-  for scope in gen.scopes:
+  for scope in gen.scopes[bottom..^1]:
     result += scope.varCount
 
 proc currentScope(gen: CodeGen): Scope =
@@ -421,6 +425,29 @@ proc popScope(gen: var CodeGen) =
     gen.chunk.emit(opcDiscard)
     gen.chunk.emit(gen.currentScope.varCount.uint8)
   discard gen.scopes.pop()
+
+proc pushFlowBlock(gen: var CodeGen, kind: FlowBlockKind) =
+  ## Push a new flow block. This creates a new scope for the flow block.
+  gen.flowBlocks.add(FlowBlock(kind: kind, bottomScope: gen.scopes.len))
+  gen.pushScope()
+
+proc breakFlowBlock(gen: var CodeGen, indexFromTop = 1) =
+  ## Break a code block. This discards the flow block's scope's variables *and*
+  ## generates a jump past the block.
+  ## This does not remove the flow block from the stack, it only jumps past it
+  ## and discards any already declared variables.
+  var fblock = gen.flowBlocks[^indexFromTop]
+  gen.chunk.emit(opcDiscard)
+  gen.chunk.emit(gen.varCount(fblock.bottomScope).uint8)
+  gen.chunk.emit(opcJumpFwd)
+  fblock.breaks.add(gen.chunk.emitHole(2))
+
+proc popFlowBlock(gen: var CodeGen) =
+  ## Pop the topmost flow block, popping its scope and filling in any breaks.
+  gen.popScope()
+  for brk in gen.flowBlocks[^1].breaks:
+    gen.chunk.patchHole(brk)
+  discard gen.flowBlocks.pop()
 
 proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
                 isMagic = false): Sym {.discardable.} =
@@ -452,7 +479,6 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
 
 proc lookup(gen: CodeGen, name: Node): Sym =
   ## Look up the symbol with the given ``name``.
-  echo "looking up <", gen.context.int, ">::", name
   if gen.scopes.len > 0:
     # try to find a local symbol
     for i in countdown(gen.scopes.len - 1, 0):
@@ -886,11 +912,11 @@ proc genIf(node: Node, isStmt: bool): Sym {.codegen.} =
     # we also need to fill the previously created jump after the branch
     gen.chunk.patchHole(afterBranch)
     # after the branch, there's another branch or the end of the if statement
+  # discard the last branch's condition
+  gen.chunk.emit(opcDiscard)
+  gen.chunk.emit(1'u8)
   # if we have an else branch, we need to compile it, too
   if hasElse:
-    # discard the last branch's condition
-    gen.chunk.emit(opcDiscard)
-    gen.chunk.emit(1'u8)
     # compile the branch
     let
       elseBranch = node[^1]
@@ -988,9 +1014,8 @@ proc genWhile(node: Node) {.codegen.} =
     isWhileTrue = false # an optimization for while true loops
     afterLoop: int # a hole pointer to the end of the loop
   let beforeLoop = gen.chunk.code.len
-  # begin a new loop
-  gen.loops.add(Loop(before: beforeLoop,
-                     bottomScope: gen.scopes.len))
+  # begin a new loop by pushing the outer flow control block
+  gen.pushFlowBlock(fbLoopOuter)
   if node[0].kind == nkBool: # if the condition is a bool literal
     if node[0].boolVal == true: isWhileTrue = true # while true is optimized
     else: return # while false is a noop
@@ -1006,8 +1031,13 @@ proc genWhile(node: Node) {.codegen.} =
     gen.chunk.emit(opcDiscard)
     gen.chunk.emit(1'u8)
   # generate the body. we don't care about its type, because while loops are not
-  # expressions
+  # expressions. this also creates the `iteration` flow block used by
+  # ``continue`` statements
+  # XXX: creating a flow block here creates a scope without any unique
+  # variables, then genBlock creates another scope. optimize this
+  gen.pushFlowBlock(fbLoopIter)
   discard gen.genBlock(node[1], isStmt = true)
+  gen.popFlowBlock()
   # after the body's done, jump back to reevaluate the condition
   gen.chunk.emit(opcJumpBack)
   gen.chunk.emit(uint16(gen.chunk.code.len - beforeLoop - 1))
@@ -1017,11 +1047,8 @@ proc genWhile(node: Node) {.codegen.} =
     # ...and pop the condition off the stack after the loop is done
     gen.chunk.emit(opcDiscard)
     gen.chunk.emit(1'u8)
-  for brk in gen.loops[^1].breaks:
-    # we also need to fill any breaks
-    gen.chunk.patchHole(brk)
-  # we're now done with the loop.
-  discard gen.loops.pop()
+  # finish the loop by popping its outer flow block.
+  gen.popFlowBlock()
 
 proc genFor(node: Node) {.codegen.} =
   ## Generate code for a ``for`` loop.
@@ -1047,7 +1074,7 @@ proc genFor(node: Node) {.codegen.} =
   iterGen.iterForCtx = gen.context
   iterGen.context = gen.ctxAllocator.allocCtx()
   # generate the arguments passed to the iterator
-  iterGen.pushScope()
+  iterGen.pushFlowBlock(fbLoopOuter)
   var argTypes: seq[Sym]
   for arg in iterParams:
     argTypes.add(iterGen.genExpr(arg))
@@ -1063,38 +1090,24 @@ proc genFor(node: Node) {.codegen.} =
   # iterate
   discard iterGen.genBlock(theIter.impl[3], isStmt = true)
   # clean up the argument scope and free the scope context
-  iterGen.popScope()
+  iterGen.popFlowBlock()
   gen.ctxAllocator.freeCtx(iterGen.context)
 
 proc genBreak(node: Node) {.codegen.} =
   ## Generate code for a ``break`` statement.
-  if gen.loops.len < 1:
-    node.error(ErrOnlyUsableInALoop % "break")
-  let loop = gen.loops[^1]
-  # discard the loop's variables
-  var varCount = 0
-  for scope in gen.scopes[loop.bottomScope..^1]:
-    inc(varCount, scope.varCount)
-  gen.chunk.emit(opcDiscard)
-  gen.chunk.emit(varCount.uint8)
-  # jump past the loop
-  gen.chunk.emit(opcJumpFwd)
-  loop.breaks.add(gen.chunk.emitHole(2))
+  if gen.flowBlocks.len < 1:
+    node.error(ErrOnlyUsableInABlock % "break")
+  # break from the loop's outer flow block
+  let indexFromTop =
+    if gen.flowBlocks[^1].kind == fbLoopIter: 2 # a loop's body
+    else: 1 # any other block (eg. an iterator's body)
+  gen.breakFlowBlock(indexFromTop)
 
 proc genContinue(node: Node) {.codegen.} =
   ## Generate code for a ``continue`` statement.
-  if gen.loops.len < 1:
+  if gen.flowBlocks.len < 1 and gen.flowBlocks[^1].kind != fbLoopIter:
     node.error(ErrOnlyUsableInALoop % "continue")
-  let loop = gen.loops[^1]
-  # discard the loop's variables
-  var varCount = 0
-  for scope in gen.scopes[loop.bottomScope..^1]:
-    inc(varCount, scope.varCount)
-  gen.chunk.emit(opcDiscard)
-  gen.chunk.emit(varCount.uint8)
-  # jump back to the condition
-  gen.chunk.emit(opcJumpBack)
-  gen.chunk.emit(uint16(gen.chunk.code.len - loop.before))
+  gen.breakFlowBlock()
 
 proc genReturn(node: Node) {.codegen.} =
   ## Generate code for a ``return`` statement.
@@ -1125,14 +1138,14 @@ proc genYield(node: Node) {.codegen.} =
   # switch context to the for loop
   let myCtx = gen.context
   gen.context = gen.iterForCtx
-  # create a new scope with the for loop variable
-  gen.pushScope()
+  # create a new iter flow block with the for loop variable
+  gen.pushFlowBlock(fbLoopIter)
   var loopVar = gen.declareVar(gen.iterForVar, skLet, gen.iter.iterYieldTy)
   loopVar.varSet = true
   # run the for loop's body
   discard gen.genBlock(gen.iterForBody, isStmt = true)
   # go back to the iterator's context
-  gen.popScope()
+  gen.popFlowBlock()
   gen.context = myCtx
 
 proc genObject(node: Node) {.codegen.} =

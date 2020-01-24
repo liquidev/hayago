@@ -59,7 +59,15 @@ suite "VM":
       if y < 0 { echo("negative") }
       elif y == 0 { echo("zero") }
       elif y > 0 { echo("positive") }
-      echo("if statements done, no stack corruption")
+    """)
+    run("""
+      if false {
+        echo("leak test")
+      }
+    """)
+    run("""
+      if false {}
+      else {}
     """)
   test "while loops":
     run("""
@@ -67,6 +75,19 @@ suite "VM":
       while x <= 20 {
         echo($x)
         x = x + 1
+      }
+    """)
+    run("""
+      var x = 0
+      while true {
+        x = x + 1
+        if x == 2 {
+          continue
+        }
+        echo($x)
+        if x == 10 {
+          break
+        }
       }
     """)
   test "objects":

@@ -77,6 +77,12 @@ proc initValue*[T: tuple | object | ref](id: TypeId, value: T): Value =
     GC_ref(value)
     result.objectVal.data = cast[pointer](value)
 
+proc foreign*(value: Value, T: typedesc): T =
+  ## Get an object value. This is a *mostly* safe operation, but attempting to
+  ## get a foreign type different from the value's is a guaranteed segfault. In
+  ## most of the cases.
+  result = cast[ptr T](value.objectVal.data)[]
+
 const nilObject* = -1 ## The field count used for initializing a nil object.
 
 proc initObject*(id: TypeId, fieldCount: int): Value =
