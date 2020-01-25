@@ -9,34 +9,44 @@ mixed in.
 
 Its main goals are:
 
-- **Simplicity.** The language is purposefully simple, for easy learning.
-  It also prevents bugs in the implementation.
+- **Simplicity.** The core feature set remains small, but powerful enough for
+  usage in applications of all complexities.
+- **Soundness.** Unlike most scripting languages out there, rod has a static
+  typing system instead of a dynamic one, which makes code more robust and
+  maintainable.
 - **Speed.** While rod isn't the fastest scripting language out there, it uses
   quite a few optimizations to make execution suitable for real-time
   applications, like games.
+- **Concurrency.** rod embraces Lua-like coroutines for lightweight and simple
+  concurrency.
 - **Easy embedding.** Embedding rod in your application is as simple as listing
-  all the things you need to be available in the VM. It's as easy as it can get.
-- **Portability.** rod avoids tricks like NaN tagging to make it suitable for
-  use on a large variety of systems. It also avoids the use of any OS-specific
-  APIs, making it run on any OS Nim supports.
+  all the things you need to be available in the VM.
 
-```rod
-var hello = "Hello, rod!"
-
-object Greeter {
-  target: string
+```nim
+proc hello(target: string) {
+  echo("Hello, " & target)
 }
 
-proc newGreeter(target: string) -> Greeter {
-  result = Greeter(target: target)
+hello("Nim users")
+
+coroutine allItems[T](list: seq[T]) -> T {
+  for x in list {
+    yield x
+  }
 }
 
-proc greet(greeter: Greeter) {
-  echo("Hello, " & greeter.target & "!")
-}
+let features = ["simple", "sound", "fast", "concurrent", "embeddable"]
 
-var worldGreeter = newGreeter("World")
-worldGreeter.greet()
+var coro = allItems()
+var message = "rod is a "
+while not coro.done {
+  message = message + coro(features)
+  if not coro.done {
+    message = message + ", "
+  }
+}
+message = message + " scripting language"
+echo(message)
 ```
 
 ## Installing
