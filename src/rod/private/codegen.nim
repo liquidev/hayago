@@ -326,6 +326,7 @@ type
     kind: FlowBlockKind
     breaks: seq[int]
     bottomScope: int
+    context: Context
   GenKind = enum
     gkToplevel
     gkProc
@@ -426,17 +427,23 @@ proc popScope(gen: var CodeGen) =
     gen.chunk.emit(gen.currentScope.varCount.uint8)
   discard gen.scopes.pop()
 
-proc pushFlowBlock(gen: var CodeGen, kind: FlowBlockKind) =
+proc pushFlowBlock(gen: var CodeGen, kind: FlowBlockKind,
+                   context = Context(-1)) =
   ## Push a new flow block. This creates a new scope for the flow block.
-  gen.flowBlocks.add(FlowBlock(kind: kind, bottomScope: gen.scopes.len))
+  let fblock = FlowBlock(kind: kind,
+                         bottomScope: gen.scopes.len)
+  if context == Context(-1):
+    fblock.context = gen.context
+  else:
+    fblock.context = context
+  gen.flowBlocks.add(fblock)
   gen.pushScope()
 
-proc breakFlowBlock(gen: var CodeGen, indexFromTop = 1) =
+proc breakFlowBlock(gen: var CodeGen, fblock: FlowBlock) =
   ## Break a code block. This discards the flow block's scope's variables *and*
   ## generates a jump past the block.
   ## This does not remove the flow block from the stack, it only jumps past it
   ## and discards any already declared variables.
-  var fblock = gen.flowBlocks[^indexFromTop]
   gen.chunk.emit(opcDiscard)
   gen.chunk.emit(gen.varCount(fblock.bottomScope).uint8)
   gen.chunk.emit(opcJumpFwd)
@@ -448,6 +455,15 @@ proc popFlowBlock(gen: var CodeGen) =
   for brk in gen.flowBlocks[^1].breaks:
     gen.chunk.patchHole(brk)
   discard gen.flowBlocks.pop()
+
+proc findFlowBlock(gen: var CodeGen, kinds: set[FlowBlockKind]): FlowBlock =
+  ## Find the topmost flow block, with the given kind, and defined in the same
+  ## context as ``gen``'s current context.
+  ## Returns ``nil`` if a matching flow block can't be found.
+  for i in countdown(gen.flowBlocks.len - 1, 0):
+    let fblock = gen.flowBlocks[i]
+    if fblock.context == gen.context and fblock.kind in kinds:
+      return fblock
 
 proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
                 isMagic = false): Sym {.discardable.} =
@@ -1074,7 +1090,9 @@ proc genFor(node: Node) {.codegen.} =
   iterGen.iterForCtx = gen.context
   iterGen.context = gen.ctxAllocator.allocCtx()
   # generate the arguments passed to the iterator
-  iterGen.pushFlowBlock(fbLoopOuter)
+  # the context is switched only *after* the loop's outer flow block is pushed,
+  # so that the loop can be ``break`` properly
+  iterGen.pushFlowBlock(fbLoopOuter, gen.context)
   var argTypes: seq[Sym]
   for arg in iterParams:
     argTypes.add(iterGen.genExpr(arg))
@@ -1095,19 +1113,21 @@ proc genFor(node: Node) {.codegen.} =
 
 proc genBreak(node: Node) {.codegen.} =
   ## Generate code for a ``break`` statement.
-  if gen.flowBlocks.len < 1:
+
+  # break from the current loop's outer flow block
+  let fblock = gen.findFlowBlock({fbLoopOuter})
+  if fblock == nil:
     node.error(ErrOnlyUsableInABlock % "break")
-  # break from the loop's outer flow block
-  let indexFromTop =
-    if gen.flowBlocks[^1].kind == fbLoopIter: 2 # a loop's body
-    else: 1 # any other block (eg. an iterator's body)
-  gen.breakFlowBlock(indexFromTop)
+  gen.breakFlowBlock(fblock)
 
 proc genContinue(node: Node) {.codegen.} =
   ## Generate code for a ``continue`` statement.
-  if gen.flowBlocks.len < 1 and gen.flowBlocks[^1].kind != fbLoopIter:
+
+  # break from the current loop's iteration flow block
+  let fblock = gen.findFlowBlock({fbLoopIter})
+  if fblock == nil:
     node.error(ErrOnlyUsableInALoop % "continue")
-  gen.breakFlowBlock()
+  gen.breakFlowBlock(fblock)
 
 proc genReturn(node: Node) {.codegen.} =
   ## Generate code for a ``return`` statement.
@@ -1129,7 +1149,11 @@ proc genReturn(node: Node) {.codegen.} =
 
 proc genYield(node: Node) {.codegen.} =
   ## Generate code for a ``yield`` statement.
-  if gen.kind != gkIterator:
+
+  # yield can only be used inside of an iterator, but never in a for loop's body
+  # using yield in a for loop's body would trigger an infinite recursion, so we
+  # prevent that
+  if gen.kind != gkIterator or gen.context == gen.iterForCtx:
     node.error(ErrOnlyUsableInAnIterator % "yield")
   # generate the iterator value
   let valTy = gen.genExpr(node[0])

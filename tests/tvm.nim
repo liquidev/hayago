@@ -140,4 +140,18 @@ suite "VM":
       assert false, "did not catch error; 'i' is visible"
     except RodError as err:
       echo "pass - ", err.msg
+    run("""
+      for x in 1..10 {
+        echo($x)
+        if x == 5 {
+          break
+        }
+      }
+    """)
+    run("""
+      for x in 1..5 {
+        if x == 2 { continue }
+        echo($x)
+      }
+    """)
 
