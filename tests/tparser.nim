@@ -67,6 +67,7 @@ suite "parser":
       proc hello(a: string) -> string {
         echo("hello, " & a)
       }
+      proc reverse[T](x: seq[T]) -> seq[T] {}
     """)
     parse("""
       onPrint(proc (text: string) {

@@ -15,39 +15,40 @@ import scanner
 type
   NodeKind* = enum
     # building blocks
-    nkEmpty         # empty node
-    nkScript        # full script
-    nkBlock         # a block - {...}
-    nkIdentDefs     # identifier definitions - a, b: s = x
-    nkFormalParams  # formal params - (a: s, ...) -> t
+    nkEmpty          # empty node
+    nkScript         # full script
+    nkBlock          # a block - {...}
+    nkIdentDefs      # identifier definitions - a, b: s = x
+    nkFormalParams   # formal params - (a: s, ...) -> t
+    nkGenericParams  # generic params - [T, U: X]
     # literals
-    nkBool          # bool literal
-    nkNumber        # number literal
-    nkString        # string literal
-    nkIdent # identifier
+    nkBool           # bool literal
+    nkNumber         # number literal
+    nkString         # string literal
+    nkIdent          # identifier
     # expressions
-    nkPrefix        # prefix operator - op expr
-    nkInfix         # infix operator - left op right
-    nkDot           # dot expression - left.right
-    nkColon         # colon expression - left: right
-    nkIndex         # index expression - left[a, ...]
-    nkCall          # call - left(a, ...)
-    nkIf            # if expression - if expr {...} elif expr {...} else {...}
+    nkPrefix         # prefix operator - op expr
+    nkInfix          # infix operator - left op right
+    nkDot            # dot expression - left.right
+    nkColon          # colon expression - left: right
+    nkIndex          # index expression - left[a, ...]
+    nkCall           # call - left(a, ...)
+    nkIf             # if expression - if expr {...} elif expr {...} else {...}
     # types
-    nkProcTy        # procedure type - proc (...) -> t
+    nkProcTy         # procedure type - proc (...) -> t
     # statements
-    nkVar           # var declaration - var a = x
-    nkLet           # let declaration - let a = x
-    nkWhile         # while loop - while cond {...}
-    nkFor           # for loop - for x in y {...}
-    nkBreak         # break statement - break
-    nkContinue      # continue statement - continue
-    nkReturn        # return statement - return x
-    nkYield         # yield statement - yield x
+    nkVar            # var declaration - var a = x
+    nkLet            # let declaration - let a = x
+    nkWhile          # while loop - while cond {...}
+    nkFor            # for loop - for x in y {...}
+    nkBreak          # break statement - break
+    nkContinue       # continue statement - continue
+    nkReturn         # return statement - return x
+    nkYield          # yield statement - yield x
     # declarations
-    nkObject        # object declaration - object name[T, ...] {...}
-    nkProc          # procedure declaration - proc name(a: s, ...) -> t {...}
-    nkIterator      # iterator declaration - iterator name(a: s, ...) -> t {...}
+    nkObject         # object declaration - object name[T, ...] {...}
+    nkProc           # procedure declaration - proc name(a: s, ...) -> t {...}
+    nkIterator       # iterator declaration - iterator name(a: s, ...) -> t {...}
   Node* = ref object          ## An AST node.
     ln*, col*: int            ## Line information used for compile errors
     file*: string
@@ -231,16 +232,19 @@ proc parseIf(): Node {.rule.} =
     children.add(parseBlock(scan))
   result = newTree(nkIf, children)
 
-proc parseProcHead*(anon: bool, name, formalParams: var Node) {.rule.}
+proc parseProcHead*(anon: bool, name,
+                    genericParams, formalParams: var Node) {.rule.}
 
 proc parseType(): Node {.rule.} =
   ## Parses a type.
   # type <- expr(9) | anonProcHead
   if scan.peek().kind == tokProc:
     discard scan.next()
-    var name, params: Node
-    parseProcHead(scan, anon = true, name, params)
-    result = newTree(nkProcTy, params)
+    var name, genericParams, formalParams: Node
+    parseProcHead(scan, anon = true, name, genericParams, formalParams)
+    if genericParams.kind != nkEmpty:
+      scan.error("Generic params are not allowed in proc types")
+    result = newTree(nkProcTy, formalParams)
   else:
     result = parseExpr(scan, prec = 9)
 
@@ -255,12 +259,15 @@ proc parseIdentDefs(): Node {.rule.} =
       identTok = scan.expect(tokIdent)
       identNode = newIdent(identTok.ident)
     result.add(identNode)
-    delim = scan.next()
+    delim = scan.peek()
     case delim.kind
-    of tokComma: continue
-    of tokColon, tokOperator: break
-    else:
-      scan.error("Comma ',', colon ':', or assignment '=' expected")
+    of tokComma:
+      discard scan.next()
+      continue
+    of tokColon, tokOperator:
+      discard scan.next()
+      break
+    else: break
   if delim.kind == tokOperator and delim.operator != "=":
     scan.error(fmt"Assignment operator '=' expected, got '{delim.ident}'")
   var
@@ -271,7 +278,7 @@ proc parseIdentDefs(): Node {.rule.} =
     ty = parseType(scan)
   of tokOperator:
     value = parseExpr(scan)
-  else: assert false, "unreachable"
+  else: discard
   if delim.kind == tokColon and scan.peek().kind == tokOperator:
     scan.expectOp("=")
     value = parseExpr(scan)
@@ -297,7 +304,8 @@ proc parseCommaList(scan: var Scanner, start, term: static TokenKind,
       scan.error("',' or '{term}' expected")
   result = true
 
-proc parseProcHead(anon: bool, name, formalParams: var Node) {.rule.} =
+proc parseProcHead(anon: bool, name,
+                   genericParams, formalParams: var Node) {.rule.} =
   ## Parse a procedure header.
   # anonProcHead <- commaList('(', ')', identDefs) -> type
   # procHead <- Ident commaList('(', ')', identDefs) -> type
@@ -306,6 +314,14 @@ proc parseProcHead(anon: bool, name, formalParams: var Node) {.rule.} =
     name = newIdent(ident.ident)
   else:
     name = newEmpty()
+  if scan.peek().kind == tokLBrk:
+    genericParams = newTree(nkGenericParams)
+    var params: seq[Node]
+    if not parseCommaList(scan, tokLBrk, tokRBrk, params, parseIdentDefs):
+      scan.error("Generic params expected")
+    genericParams.add(params)
+  else:
+    genericParams = newEmpty()
   formalParams = newTree(nkFormalParams, newEmpty())
   if scan.peek().kind == tokLPar:
     var params: seq[Node]
@@ -320,12 +336,10 @@ proc parseProc(anon: bool): Node {.rule.} =
   ## Parse a procedure or anonymous procedure.
   # anonProc <- anonProcHead block
   # proc <- procHead block
-  var name, formalParams: Node
-  parseProcHead(scan, anon, name, formalParams)
+  var name, genericParams, formalParams: Node
+  parseProcHead(scan, anon, name, genericParams, formalParams)
   let body = parseBlock(scan)
-  result = newTree(nkProc, name,
-                   newEmpty(), # reserved for generic params
-                   formalParams, body)
+  result = newTree(nkProc, name, genericParams, formalParams, body)
 
 proc parsePrefix(token: Token): Node {.rule.} =
   ## Parses a prefix expression.
@@ -445,12 +459,10 @@ proc parseObject(): Node {.rule.} =
 proc parseIterator(): Node {.rule.} =
   ## Parse an iterator declaration.
   discard scan.next()
-  var name, formalParams: Node
-  parseProcHead(scan, anon = false, name, formalParams)
+  var name, genericParams, formalParams: Node
+  parseProcHead(scan, anon = false, name, genericParams, formalParams)
   let body = parseBlock(scan)
-  result = newTree(nkIterator, name,
-                   newEmpty(), # reserved for generic params
-                   formalParams, body)
+  result = newTree(nkIterator, name, genericParams, formalParams, body)
 
 proc parseBreak(): Node {.rule.} =
   ## Parses a break statement.
