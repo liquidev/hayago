@@ -1,3 +1,4 @@
+import tables
 import times
 import unittest
 
@@ -38,7 +39,10 @@ template compile(input: string) =
     cp.genScript(ast)
   echo ast.treeRepr
   echo module
-  echo `$`(script, input)
+  echo `$`(script, {
+    "system.rod": RodlibSystemSrc,
+    "testcase.rod": input,
+  }.toTable)
 
 suite "compiler":
   test "variables":

@@ -37,7 +37,7 @@ template run(input: string) =
   when defined(dumpDisassembly):
     echo `$`(script, {
       "system.rod": RodlibSystemSrc,
-      "testcase.rod": input
+      "testcase.rod": input,
     }.toTable)
   var vm = newVm()
   benchmark("runtime"):

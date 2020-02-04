@@ -1181,7 +1181,7 @@ proc genObject(node: Node) {.codegen.} =
   ty.impl = node
   ty.objectId = gen.script.typeCount
   inc(gen.script.typeCount)
-  for fields in node[1..^1]:
+  for fields in node[2]:
     # get the fields' type
     let fieldsTy = gen.lookup(fields[^2])
     # create all the fields with the given type

@@ -21,6 +21,7 @@ type
     nkIdentDefs      # identifier definitions - a, b: s = x
     nkFormalParams   # formal params - (a: s, ...) -> t
     nkGenericParams  # generic params - [T, U: X]
+    nkRecFields      # record fields - { a, b: t; c: u }
     # literals
     nkBool           # bool literal
     nkNumber         # number literal
@@ -46,9 +47,9 @@ type
     nkReturn         # return statement - return x
     nkYield          # yield statement - yield x
     # declarations
-    nkObject         # object declaration - object name[T, ...] {...}
-    nkProc           # procedure declaration - proc name(a: s, ...) -> t {...}
-    nkIterator       # iterator declaration - iterator name(a: s, ...) -> t {...}
+    nkObject         # object declaration - object o[T, ...] {...}
+    nkProc           # procedure declaration - proc p(a: s, ...) -> t {...}
+    nkIterator       # iterator declaration - iterator i(a: s, ...) -> t {...}
   Node* = ref object          ## An AST node.
     ln*, col*: int            ## Line information used for compile errors
     file*: string
@@ -441,6 +442,7 @@ proc parseObject(): Node {.rule.} =
   ## Parses an object declaration.
   # identDefs <- commaList(Ident) ':' type
   # object <- 'object' type '{' *identDefs '}'
+  result = newNode(nkObject)
   discard scan.next()
   let name = newIdent(scan.expect(tokIdent, "Object name expected").ident)
   var genericParams = newEmpty()
@@ -449,9 +451,9 @@ proc parseObject(): Node {.rule.} =
     var params: seq[Node]
     discard parseCommaList(scan, tokLBrk, tokRBrk, params, parseIdentDefs)
     genericParams.add(params)
+  result.add([name, genericParams])
   scan.expect(tokLBrace)
-  var fields: seq[Node]
-  fields.add([name, genericParams])
+  var fields = newNode(nkRecFields)
   while scan.peek().kind != tokRBrace:
     if scan.atEnd:
       scan.error("Missing right brace '}'")
@@ -459,7 +461,7 @@ proc parseObject(): Node {.rule.} =
     if not scan.linefeed() and scan.peek().kind != tokRBrace:
       scan.error("Line feed expected after object field")
   discard scan.next()
-  result = newTree(nkObject, fields)
+  result.add(fields)
 
 proc parseIterator(): Node {.rule.} =
   ## Parse an iterator declaration.
