@@ -317,8 +317,7 @@ proc parseProcHead(anon: bool, name,
   if scan.peek().kind == tokLBrk:
     genericParams = newTree(nkGenericParams)
     var params: seq[Node]
-    if not parseCommaList(scan, tokLBrk, tokRBrk, params, parseIdentDefs):
-      scan.error("Generic params expected")
+    discard parseCommaList(scan, tokLBrk, tokRBrk, params, parseIdentDefs)
     genericParams.add(params)
   else:
     genericParams = newEmpty()
@@ -443,10 +442,16 @@ proc parseObject(): Node {.rule.} =
   # identDefs <- commaList(Ident) ':' type
   # object <- 'object' type '{' *identDefs '}'
   discard scan.next()
-  let name = parseExpr(scan, prec = 9)
+  let name = newIdent(scan.expect(tokIdent, "Object name expected").ident)
+  var genericParams = newEmpty()
+  if scan.peek().kind == tokLBrk:
+    genericParams = newTree(nkGenericParams)
+    var params: seq[Node]
+    discard parseCommaList(scan, tokLBrk, tokRBrk, params, parseIdentDefs)
+    genericParams.add(params)
   scan.expect(tokLBrace)
   var fields: seq[Node]
-  fields.add(name)
+  fields.add([name, genericParams])
   while scan.peek().kind != tokRBrace:
     if scan.atEnd:
       scan.error("Missing right brace '}'")
