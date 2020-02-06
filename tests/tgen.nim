@@ -125,6 +125,9 @@ suite "compiler":
       }
 
       var x = Pair[number, string](a: 1, b: "hello")
+
+      proc typeTest(a: Pair) {}
+      typeTest(x)
     """)
   test "procs":
     compile("""

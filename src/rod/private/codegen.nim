@@ -14,8 +14,6 @@ import common
 import parser
 import value
 
-{.push experimental: "codeReordering".}
-
 #--
 # Error messages
 #--
@@ -101,9 +99,6 @@ type
         objectId: TypeId
         objectFields: Table[string, ObjectField]
       tyParents: seq[Sym] ## Parent types.
-      tyParams: seq[GenericParam] ## Generic params of a type. Empty if \
-                                  ## the type does not have generic params.
-      tyInstCache: Table[seq[Sym], Sym] ## Cache of generic instantiations.
     of skProc:
       procId: uint16 ## The unique number of the proc.
       procParams: seq[ProcParam] ## The proc's parameters.
@@ -113,6 +108,9 @@ type
       iterYieldTy: Sym ## The yield type of the iterator.
     of skChoice:
       choices: seq[Sym] ## The choices.
+    genericParams: seq[GenericParam] ## Generic params of a type. Empty if \
+                                     ## the type does not have generic params.
+    genericInstCache: Table[seq[Sym], Sym] ## Cache of generic instantiations.
   ObjectField = tuple
     id: int
     name: Node
@@ -149,13 +147,13 @@ proc `$`(sym: Sym): string =
     result = "let of type " & sym.varTy.name.ident
   of skType:
     result = "type"
-    if sym.tyParams.len != 0:
+    if sym.genericParams.len != 0:
       result.add("[")
-      for i, (name, constraint) in sym.tyParams:
+      for i, (name, constraint) in sym.genericParams:
         result.add($name)
         if constraint != nil:
           result.add(": " & $constraint.name)
-        if i != sym.tyParams.len - 1:
+        if i != sym.genericParams.len - 1:
           result.add(", ")
       result.add("]")
     result.add(" = ")
@@ -190,7 +188,7 @@ proc hash(sym: Sym): Hash =
     result = result !& hash(sym.tyKind)
     if sym.tyKind == tkObject:
       result = result !& hash(sym.objectId)
-    result = result !& hash(sym.tyParams)
+    result = result !& hash(sym.genericParams)
   of skProc:
     result = result !& hash(sym.procId)
     result = result !& hash(sym.procParams)
@@ -204,10 +202,10 @@ proc hash(sym: Sym): Hash =
   result = !$result
 
 proc isConcrete(sym: Sym): bool =
-  ## Checks if the symbol is a concrete symbol (denodes *one* specific type
+  ## Checks if the symbol is a concrete symbol (denotes *one* specific type
   ## without any generic parameters).
   result =
-    if sym.kind == skType: sym.tyParams.len == 0
+    if sym.kind == skType: sym.genericParams.len == 0
     else: true
 
 proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
@@ -571,7 +569,7 @@ proc createObject(node: Node, isInstantiation = false): Sym {.codegen.} =
         if defs[^2].kind != nkEmpty: gen.lookup(defs[^2])
         else: nil
       for name in defs[0..^3]:
-        result.tyParams.add (name, constraint)
+        result.genericParams.add (name, constraint)
   # if the object is not generic, create a concrete object right away
   else:
     for fields in node[2]:
@@ -590,27 +588,27 @@ proc instantiate(gen: var CodeGen, sym: Sym, params: seq[Sym],
   ## Errors will be reported at ``errorExpr``'s position.
   case sym.kind
   of skType:
-    if errorExpr != nil and sym.tyParams.len == 0:
+    if errorExpr != nil and sym.genericParams.len == 0:
       errorExpr.error(ErrSymIsNotAGenericX % [$errorExpr, "type"])
     # generic instantiations are cached, so A[T] == A[T].
     # also, speed. but semantics are more important.
-    if params in sym.tyInstCache:
-      result = sym.tyInstCache[params]
+    if params in sym.genericInstCache:
+      result = sym.genericInstCache[params]
     else:
       # if our desired instantiation is not in the type's cache, we'll have to
       # create it
-      if params.len != sym.tyParams.len:
+      if params.len != sym.genericParams.len:
         errorExpr.error(ErrGenericParamAmtMismatch %
-                          [$params.len, $sym.tyParams.len])
+                          [$params.len, $sym.genericParams.len])
       if sym.tyKind == tkObject:
         gen.pushScope()
         for i, ty in params:
           # TODO: inheritance, concepts, and type constraints
-          let (name, constraint {.used.}) = sym.tyParams[i]
+          let (name, constraint {.used.}) = sym.genericParams[i]
           discard gen.currentScope.add(ty, $name)
         try:
           result = gen.createObject(sym.impl, isInstantiation = true)
-          sym.tyInstCache[params] = result
+          sym.genericInstCache[params] = result
         except RodError as err:
           errorExpr.error(ErrInGenericInst % [err.msg])
         gen.popScope()
@@ -622,8 +620,8 @@ proc instantiate(gen: var CodeGen, sym: Sym, params: seq[Sym],
         result[] = sym[]
       # now we need to add the parent sym and make the new sym concrete.
       result.tyParents.add(sym)
-      result.tyParams.setLen(0)
-      result.tyInstCache.clear()
+      result.genericParams.setLen(0)
+      result.genericInstCache.clear()
     assert result.isConcrete
   else:
     errorExpr.error(ErrSymIsNotGeneric)
@@ -1434,5 +1432,3 @@ proc genScript*(node: Node) {.codegen.} =
   for s in node:
     gen.genStmt(s)
   gen.chunk.emit(opcHalt)
-
-{.pop experimental: "codeReordering".}
