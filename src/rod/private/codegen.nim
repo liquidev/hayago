@@ -4,6 +4,7 @@
 # licensed under the MIT license
 #--
 
+import hashes
 import macros
 import strutils
 import tables
@@ -12,6 +13,8 @@ import chunk
 import common
 import parser
 import value
+
+{.push experimental: "codeReordering".}
 
 #--
 # Error messages
@@ -27,7 +30,7 @@ const
   ErrUndefinedReference = "'$1' is not declared in the current scope"
   ErrLetReassignment = "'$1' cannot be reassigned"
   ErrTypeMismatch = "Type mismatch: got <$1>, but expected <$2>"
-  ErrTypeMismatchChoice = "Type mismatch: got <$1>, but expected one of:\n$2"
+  ErrTypeMismatchChoice = "Type mismatch: got <$1>, but expected one of:$2"
   ErrNotAProc = "'$1' is not a proc"
   ErrInvalidField = "'$1' is not a valid field"
   ErrNonExistentField = "Field '$1' does not exist"
@@ -37,8 +40,6 @@ const
   ErrFieldInitMustBeAColonExpr =
     "Field initializer must be a colon expression: 'a: b'"
   ErrNoSuchField = "<$1> does not have the field '$2'"
-  ErrDefaultProcParamsUnsupported =
-    "Default proc parameters are not yet supported"
   ErrValueIsVoid = "Value does not have a valid type"
   ErrOnlyUsableInABlock =
     "'$1' can only be used inside a loop or a block statement"
@@ -48,6 +49,13 @@ const
   ErrVarMustHaveValue = "Variable must have a value"
   ErrIterMustHaveYieldType = "Iterator must have a non-void yield type"
   ErrSymKindMismatch = "$1 expected, but got $2"
+  ErrIdentDefsValueNotAllowed = "Value not allowed here"
+  ErrExprIsNotASym = "Expression '$1' does not name a valid symbol"
+  ErrSymIsNotConcrete = "'$1' is not a concrete $2"
+  ErrSymIsNotAGenericX = "'$1' is not a generic $2"
+  ErrSymIsNotGeneric = "'$1' is not generic"
+  ErrGenericParamAmtMismatch = "Got $1 generic type(s), but expected $2"
+  ErrInGenericInst = "Error in generic instantiation:\n$1"
 
 #--
 # Compile-time info
@@ -92,6 +100,10 @@ type
       of tkObject:
         objectId: TypeId
         objectFields: Table[string, ObjectField]
+      tyParents: seq[Sym] ## Parent types.
+      tyParams: seq[GenericParam] ## Generic params of a type. Empty if \
+                                  ## the type does not have generic params.
+      tyInstCache: Table[seq[Sym], Sym] ## Cache of generic instantiations.
     of skProc:
       procId: uint16 ## The unique number of the proc.
       procParams: seq[ProcParam] ## The proc's parameters.
@@ -105,6 +117,9 @@ type
     id: int
     name: Node
     ty: Sym
+  GenericParam* = tuple ## A single generic param.
+    name: Node
+    constraint: Sym
   ProcParam* = tuple ## A single param of a proc.
     name: Node
     ty: Sym
@@ -133,7 +148,17 @@ proc `$`(sym: Sym): string =
   of skLet:
     result = "let of type " & sym.varTy.name.ident
   of skType:
-    result = "type = "
+    result = "type"
+    if sym.tyParams.len != 0:
+      result.add("[")
+      for i, (name, constraint) in sym.tyParams:
+        result.add($name)
+        if constraint != nil:
+          result.add(": " & $constraint.name)
+        if i != sym.tyParams.len - 1:
+          result.add(", ")
+      result.add("]")
+    result.add(" = ")
     case sym.tyKind
     of tkPrimitives: result.add($sym.tyKind)
     of tkObject:
@@ -151,13 +176,43 @@ proc `$`(sym: Sym): string =
       result.add(" " & $choice & ",")
     result.add(" }")
 
+proc hash(sym: Sym): Hash =
+  ## Get a unique hash for a symbol.
+  result = 0
+  result = result !& hash(sym.name)
+  if sym.impl != nil: result = result !& hash(sym.impl)
+  result = result !& hash(sym.kind)
+  case sym.kind
+  of skVars:
+    result = result !& hash(sym.varTy)
+    result = result !& hash(sym.varLocal)
+  of skType:
+    result = result !& hash(sym.tyKind)
+    if sym.tyKind == tkObject:
+      result = result !& hash(sym.objectId)
+    result = result !& hash(sym.tyParams)
+  of skProc:
+    result = result !& hash(sym.procId)
+    result = result !& hash(sym.procParams)
+    result = result !& hash(sym.procReturnTy)
+  of skIterator:
+    result = result !& hash(sym.iterParams)
+    result = result !& hash(sym.iterYieldTy)
+  of skChoice:
+    for s in sym.choices:
+      result = result !& hash(s)
+  result = !$result
+
+proc isConcrete(sym: Sym): bool =
+  ## Checks if the symbol is a concrete symbol (denodes *one* specific type
+  ## without any generic parameters).
+  result =
+    if sym.kind == skType: sym.tyParams.len == 0
+    else: true
+
 proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
   ## Create a new symbol from a Node.
   result = Sym(name: name, impl: impl, kind: kind)
-
-proc genSym(kind: SymKind, name: string): Sym =
-  ## Generate a new symbol from a string name.
-  result = Sym(name: newIdent(name), kind: kind)
 
 proc newType(kind: TypeKind, name: Node): Sym =
   ## Create a new type symbol from a Node.
@@ -192,7 +247,7 @@ proc canAdd(choice, sym: Sym): bool =
           if ty != other.procParams[i].ty: return true
   of skChoice: discard
 
-proc add(scope: Scope, sym: Sym): bool =
+proc add(scope: Scope, sym: Sym, name = ""): bool =
   ## Add a symbol to the given scope. If a symbol under the given name already
   ## exists, it's added into an skChoice. The rules for overloading are:
   ## - there may only be one skVar or skLet under a given skChoice,
@@ -200,7 +255,11 @@ proc add(scope: Scope, sym: Sym): bool =
   ## - there may be any number of skProcs with unique parameter lists under a
   ##   single skChoice.
   ## If any one of these checks fails, the proc will return ``false``.
-  let name = sym.name.ident
+  ## If ``name`` is not empty, it will be used for the lookup name of the given
+  ## symbol instead of ``sym.name.ident``.
+  let name =
+    if name.len == 0: sym.name.ident
+    else: name
   if name notin scope.syms:
     scope.syms[name] = sym
     result = true
@@ -493,18 +552,109 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
     if not gen.module.add(result):
       name.error(ErrGlobalRedeclaration % $name)
 
-proc lookup(gen: CodeGen, name: Node): Sym =
-  ## Look up the symbol with the given ``name``.
+proc lookup(gen: var CodeGen, expr: Node): Sym
+
+proc createObject(node: Node, isInstantiation = false): Sym {.codegen.} =
+  ## Create an object symbol from a Node.
+
+  # create a new type for the object
+  result = newType(tkObject, node[0])
+  result.impl = node
+  result.objectId = gen.script.typeCount
+  inc(gen.script.typeCount)
+  # collect its generic params
+  if not isInstantiation and node[1].kind != nkEmpty:
+    for defs in node[1]:
+      if defs[^1].kind != nkEmpty:
+        defs.error(ErrIdentDefsValueNotAllowed)
+      let constraint =
+        if defs[^2].kind != nkEmpty: gen.lookup(defs[^2])
+        else: nil
+      for name in defs[0..^3]:
+        result.tyParams.add (name, constraint)
+  # if the object is not generic, create a concrete object right away
+  else:
+    for fields in node[2]:
+      # get the fields' type
+      let fieldsTy = gen.lookup(fields[^2])
+      # create all the fields with the given type
+      for name in fields[0..^3]:
+        result.objectFields.add(name.ident,
+                                (id: result.objectFields.len,
+                                 name: name,
+                                 ty: fieldsTy))
+
+proc instantiate(gen: var CodeGen, sym: Sym, params: seq[Sym],
+                 errorExpr: Node = nil): Sym =
+  ## Instantiate a generic symbol, given the generic parameters.
+  ## Errors will be reported at ``errorExpr``'s position.
+  case sym.kind
+  of skType:
+    if errorExpr != nil and sym.tyParams.len == 0:
+      errorExpr.error(ErrSymIsNotAGenericX % [$errorExpr, "type"])
+    # generic instantiations are cached, so A[T] == A[T].
+    # also, speed. but semantics are more important.
+    if params in sym.tyInstCache:
+      result = sym.tyInstCache[params]
+    else:
+      # if our desired instantiation is not in the type's cache, we'll have to
+      # create it
+      if params.len != sym.tyParams.len:
+        errorExpr.error(ErrGenericParamAmtMismatch %
+                          [$params.len, $sym.tyParams.len])
+      if sym.tyKind == tkObject:
+        gen.pushScope()
+        for i, ty in params:
+          # TODO: inheritance, concepts, and type constraints
+          let (name, constraint {.used.}) = sym.tyParams[i]
+          discard gen.currentScope.add(ty, $name)
+        try:
+          result = gen.createObject(sym.impl, isInstantiation = true)
+          sym.tyInstCache[params] = result
+        except RodError as err:
+          errorExpr.error(ErrInGenericInst % [err.msg])
+        gen.popScope()
+      else:
+        # instantiating a builtin does not need much extra work.
+        # builtins only need generics for extra type safety, so it's fine to
+        # simply copy the existing sym.
+        result = new(Sym)
+        result[] = sym[]
+      # now we need to add the parent sym and make the new sym concrete.
+      result.tyParents.add(sym)
+      result.tyParams.setLen(0)
+      result.tyInstCache.clear()
+    assert result.isConcrete
+  else:
+    errorExpr.error(ErrSymIsNotGeneric)
+
+proc lookup(gen: var CodeGen, expr: Node): Sym =
+  ## Look up the symbol for the given expression ``expr``.
+  if expr.kind notin {nkIdent, nkIndex}:
+    expr.error(ErrExprIsNotASym % $expr)
+  let name =
+    if expr.kind == nkIndex: expr[0]
+    else: expr
   if gen.scopes.len > 0:
     # try to find a local symbol
     for i in countdown(gen.scopes.len - 1, 0):
       if gen.scopes[i].context == gen.context and
          name.ident in gen.scopes[i].syms:
-        return gen.scopes[i].syms[name.ident]
-  if name.ident in gen.module.syms:
+        result = gen.scopes[i].syms[name.ident]
+        break
+  elif name.ident in gen.module.syms:
     # try to find a global symbol
-    return gen.module.syms[name.ident]
-  name.error(ErrUndefinedReference % $name)
+    result = gen.module.syms[name.ident]
+  if result == nil:
+    expr.error(ErrUndefinedReference % $name)
+  # instantiate generic symbols
+  if expr.kind == nkIndex:
+    var genericParams: seq[Sym]
+    for param in expr[1..^1]:
+      genericParams.add(gen.lookup(param))
+    result = gen.instantiate(result, genericParams, errorExpr = expr)
+  if not result.isConcrete:
+    expr.error(ErrSymIsNotConcrete % [$expr, "type"])
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -1172,22 +1322,11 @@ proc genYield(node: Node) {.codegen.} =
   gen.popFlowBlock()
   gen.context = myCtx
 
-proc genObject(node: Node) {.codegen.} =
+proc genObject(node: Node): Sym {.codegen.} =
   ## Process an object declaration, and add the new type into the current
   ## module or scope.
 
-  # create a new type for the object
-  var ty = newType(tkObject, node[0])
-  ty.impl = node
-  ty.objectId = gen.script.typeCount
-  inc(gen.script.typeCount)
-  for fields in node[2]:
-    # get the fields' type
-    let fieldsTy = gen.lookup(fields[^2])
-    # create all the fields with the given type
-    for name in fields[0..^3]:
-      ty.objectFields.add(name.ident,
-                          (id: ty.objectFields.len, name: name, ty: fieldsTy))
+  let ty = gen.createObject(node)
   if gen.scopes.len > 0:
     # local type
     if not gen.currentScope.add(ty):
@@ -1260,7 +1399,7 @@ proc genStmt(node: Node) {.codegen.} =
   of nkYield: gen.genYield(node) # yield statement
   of nkProc: gen.genProc(node) # procedure declaration
   of nkIterator: gen.genIterator(node) # iterator declaration
-  of nkObject: gen.genObject(node) # object declaration
+  of nkObject: discard gen.genObject(node) # object declaration
   else: # expression statement
     let ty = gen.genExpr(node)
     if ty != gen.module.sym"void":
@@ -1296,3 +1435,4 @@ proc genScript*(node: Node) {.codegen.} =
     gen.genStmt(s)
   gen.chunk.emit(opcHalt)
 
+{.pop experimental: "codeReordering".}

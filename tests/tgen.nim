@@ -117,6 +117,15 @@ suite "compiler":
       var x = instance.x
       instance.y = 30
     """)
+  test "generic objects":
+    compile("""
+      object Pair[T, U] {
+        a: T
+        b: U
+      }
+
+      var x = Pair[number, string](a: 1, b: "hello")
+    """)
   test "procs":
     compile("""
       echo("Hello!")

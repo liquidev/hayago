@@ -6,6 +6,7 @@
 
 # Parser procs (``parse*``) are annotated with pseudo-npeg rules.
 
+import hashes
 import macros
 import strformat
 import strutils
@@ -125,6 +126,19 @@ proc treeRepr*(node: Node): string =
     for i, child in node.children:
       children.add('\n' & child.treeRepr)
     result.add(children.indent(2))
+
+proc hash*(node: Node): Hash =
+  result = 0
+  result = result !& hash(node.kind)
+  case node.kind
+  of nkBool: result = result !& hash(node.boolVal)
+  of nkNumber: result = result !& hash(node.numberVal)
+  of nkString: result = result !& hash(node.stringVal)
+  of nkIdent: result = result !& hash(node.ident)
+  else:
+    for child in node.children:
+      result = result !& hash(child)
+  result = !$result
 
 proc newNode*(kind: NodeKind): Node =
   ## Construct a new node.
