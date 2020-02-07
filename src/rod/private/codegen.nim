@@ -126,6 +126,7 @@ const
   skVars = {skVar, skLet}
   skCallable = {skProc, skIterator}
   tkPrimitives = {tkVoid..tkString}
+  ProcNoImpl = high(uint16)
 
 proc `==`(a, b: Context): bool {.borrow.}
 
@@ -165,7 +166,9 @@ proc `$`(sym: Sym): string =
         result.add(" " & name & ": " & $field.ty.name & ";")
       result.add(" }")
   of skProc:
-    result = "proc " & $sym.name & "{" & $sym.procId & "}" & $sym.procParams
+    result = "proc " & $sym.name & "{" &
+             (if sym.procId == ProcNoImpl: "-" else: $sym.procId) & "}" &
+             $sym.procParams
   of skIterator:
     result = "iterator " & $sym.name & $sym.iterParams
   of skChoice:
@@ -204,9 +207,7 @@ proc hash(sym: Sym): Hash =
 proc isConcrete(sym: Sym): bool =
   ## Checks if the symbol is a concrete symbol (denotes *one* specific type
   ## without any generic parameters).
-  result =
-    if sym.kind == skType: sym.genericParams.len == 0
-    else: true
+  result = sym.genericParams.len == 0
 
 proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
   ## Create a new symbol from a Node.
@@ -303,35 +304,38 @@ proc error(node: Node, msg: string) =
 
 proc addProc*(script: Script, module: Module, name, impl: Node,
               params: openarray[ProcParam], returnTy: Sym,
-              kind: ProcKind, addToScript = true): Proc =
+              kind: ProcKind, addToScript, addSym = true): (Proc, Sym) =
   ## Add a procedure to the given module, belonging to the given script.
   let
     id = script.procs.len.uint16
     strName =
       if name.kind == nkEmpty: ":anonymous"
       else: name.ident
-  result = Proc(name: strName, kind: kind,
-                paramCount: params.len,
-                hasResult: returnTy.tyKind != tkVoid)
-  if addToScript: script.procs.add(result)
+  var theProc = Proc(name: strName, kind: kind,
+                     paramCount: params.len,
+                     hasResult: returnTy.tyKind != tkVoid)
+  if addToScript: script.procs.add(theProc)
   let sym = newSym(skProc, name, impl)
   sym.procId = id
   sym.procParams = @params
   sym.procReturnTy = returnTy
-  if not module.add(sym):
+  if addSym and not module.add(sym):
     name.error(ErrProcRedefinition)
+  result = (theProc, sym)
 
 proc addProc*(script: Script, module: Module, name: string,
               params: openarray[(string, string)], returnTy: string,
-              impl: ForeignProc = nil): Proc {.discardable.} =
+              impl: ForeignProc = nil) =
   ## Add a foreign procedure to the given module, belonging to the given script.
   var nodeParams: seq[ProcParam]
   for param in params:
     nodeParams.add((newIdent(param[0]), module.sym(param[1])))
-  result = script.addProc(module, newIdent(name), impl = nil,
-                          nodeParams, module.sym(returnTy), pkForeign,
-                          addToScript = impl != nil)
-  result.foreign = impl
+  var (theProc, sym) = script.addProc(module, newIdent(name), impl = nil,
+                                      nodeParams, module.sym(returnTy),
+                                      pkForeign, addToScript = impl != nil)
+  theProc.foreign = impl
+  if impl == nil:
+    sym.procId = ProcNoImpl
 
 proc newModule*(name: string): Module =
   ## Initialize a new module.
@@ -393,6 +397,8 @@ type
     module: Module ## The global scope.
     chunk: Chunk ## The chunk of code we're generating.
     scopes: seq[Scope] ## Local scopes.
+    bottomScope: int ## Index of the starting scope of this code generator.
+                     ## Used for detecting and creating upvalues.
     flowBlocks: seq[FlowBlock] ## Flow control blocks.
     ctxAllocator: ContextAllocator ## The context allocator.
     context: Context ## The codegen's scope context. This is used to achieve \
@@ -429,7 +435,8 @@ proc initCodeGen*(script: Script, module: Module, chunk: Chunk,
 proc clone(gen: CodeGen, kind: GenKind): CodeGen =
   ## Clone a code generator, using a different kind for the new one.
   result = CodeGen(script: gen.script, module: gen.module, chunk: gen.chunk,
-                   scopes: gen.scopes, flowBlocks: gen.flowBlocks,
+                   scopes: gen.scopes, bottomScope: gen.scopes.len,
+                   flowBlocks: gen.flowBlocks,
                    ctxAllocator: gen.ctxAllocator, context: gen.context,
                    kind: kind)
 
@@ -522,6 +529,18 @@ proc findFlowBlock(gen: var CodeGen, kinds: set[FlowBlockKind]): FlowBlock =
     if fblock.context == gen.context and fblock.kind in kinds:
       return fblock
 
+proc addSym(gen: var CodeGen, sym: Sym, name: Node = nil) =
+  ## Add a symbol into the topmost scope.
+  let strName =
+    if name == nil: $sym.name
+    else: $name
+  if gen.scopes.len > 0:
+    if not gen.currentScope.add(sym, strName):
+      name.error(ErrLocalRedeclaration % $name)
+  else:
+    if not gen.module.add(sym, strName):
+      name.error(ErrGlobalRedeclaration % $name)
+
 proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
                 isMagic = false): Sym {.discardable.} =
   ## Declare a new variable with the given ``name``, of the given ``kind``, with
@@ -539,53 +558,48 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
   result.varTy = ty
   result.varSet = false
   if gen.scopes.len > 0:
-    # declare a local
     result.varLocal = true
     result.varStackPos = gen.varCount
-    if not gen.currentScope.add(result):
-      name.error(ErrLocalRedeclaration % $name)
-  else:
-    # declare a global
-    result.varLocal = false
-    if not gen.module.add(result):
-      name.error(ErrGlobalRedeclaration % $name)
+  gen.addSym(result, name)
 
 proc lookup(gen: var CodeGen, expr: Node): Sym
 
-proc createObject(node: Node, isInstantiation = false): Sym {.codegen.} =
-  ## Create an object symbol from a Node.
-
-  # create a new type for the object
-  result = newType(tkObject, node[0])
-  result.impl = node
-  result.objectId = gen.script.typeCount
-  inc(gen.script.typeCount)
-  # collect its generic params
-  if not isInstantiation and node[1].kind != nkEmpty:
-    for defs in node[1]:
-      if defs[^1].kind != nkEmpty:
-        defs.error(ErrIdentDefsValueNotAllowed)
-      let constraint =
-        if defs[^2].kind != nkEmpty: gen.lookup(defs[^2])
-        else: nil
-      for name in defs[0..^3]:
-        result.genericParams.add (name, constraint)
-  # if the object is not generic, create a concrete object right away
-  else:
-    for fields in node[2]:
-      # get the fields' type
-      let fieldsTy = gen.lookup(fields[^2])
-      # create all the fields with the given type
-      for name in fields[0..^3]:
-        result.objectFields.add(name.ident,
-                                (id: result.objectFields.len,
-                                 name: name,
-                                 ty: fieldsTy))
+proc genProc(node: Node, isInstantiation = false): Sym {.codegen.}
+proc createObject(node: Node, isInstantiation = false): Sym {.codegen.}
 
 proc instantiate(gen: var CodeGen, sym: Sym, params: seq[Sym],
                  errorExpr: Node = nil): Sym =
   ## Instantiate a generic symbol, given the generic parameters.
   ## Errors will be reported at ``errorExpr``'s position.
+
+  # this proc is quite big, but that's because generics are quite hairy and need
+  # a lot of work to actually, well… work. hopefully this is as bug-free as
+  # possible, but I wouldn't be surprised if it contains some glitchy behavior.
+  # TODO: clean up repetitive code.
+
+  assert not sym.isConcrete
+  if params.len != sym.genericParams.len:
+    errorExpr.error(ErrGenericParamAmtMismatch %
+                      [$params.len, $sym.genericParams.len])
+
+  template withGenericParams(body) =
+    ## Declare the given generic parameters in a new scope for instantiations,
+    ## and execute the given body.
+    gen.pushScope()
+    for i, ty in params:
+      # TODO: inheritance, concepts, and type constraints
+      let (name, constraint {.used.}) = sym.genericParams[i]
+      echo (name, ty)
+      gen.addSym(ty, name)
+    try:
+      body
+    except RodError as err:
+      var stackTrace = ""
+      if compileOption("stacktrace"):
+        stackTrace.add("\n---- reraised from:\n" & err.getStackTrace())
+      errorExpr.error(ErrInGenericInst % [err.msg & stackTrace])
+    gen.popScope()
+
   case sym.kind
   of skType:
     if errorExpr != nil and sym.genericParams.len == 0:
@@ -597,21 +611,10 @@ proc instantiate(gen: var CodeGen, sym: Sym, params: seq[Sym],
     else:
       # if our desired instantiation is not in the type's cache, we'll have to
       # create it
-      if params.len != sym.genericParams.len:
-        errorExpr.error(ErrGenericParamAmtMismatch %
-                          [$params.len, $sym.genericParams.len])
       if sym.tyKind == tkObject:
-        gen.pushScope()
-        for i, ty in params:
-          # TODO: inheritance, concepts, and type constraints
-          let (name, constraint {.used.}) = sym.genericParams[i]
-          discard gen.currentScope.add(ty, $name)
-        try:
+        withGenericParams:
           result = gen.createObject(sym.impl, isInstantiation = true)
           sym.genericInstCache[params] = result
-        except RodError as err:
-          errorExpr.error(ErrInGenericInst % [err.msg])
-        gen.popScope()
       else:
         # instantiating a builtin does not need much extra work.
         # builtins only need generics for extra type safety, so it's fine to
@@ -623,6 +626,17 @@ proc instantiate(gen: var CodeGen, sym: Sym, params: seq[Sym],
       result.genericParams.setLen(0)
       result.genericInstCache.clear()
     assert result.isConcrete
+  of skProc:
+    if errorExpr != nil and sym.genericParams.len == 0:
+      errorExpr.error(ErrSymIsNotAGenericX % [$errorExpr, "proc"])
+    # again, generic instantiations are cached.
+    if params in sym.genericInstCache:
+      result = sym.genericInstCache[params]
+    else:
+      # add the generic types to a new scope
+      withGenericParams:
+        result = gen.genProc(sym.impl, isInstantiation = true)
+        sym.genericInstCache[params] = result
   else:
     errorExpr.error(ErrSymIsNotGeneric)
 
@@ -633,16 +647,19 @@ proc lookup(gen: var CodeGen, expr: Node): Sym =
   let name =
     if expr.kind == nkIndex: expr[0]
     else: expr
+  # try to find a local symbol
+  echo "looking up ", expr
   if gen.scopes.len > 0:
-    # try to find a local symbol
     for i in countdown(gen.scopes.len - 1, 0):
+      echo gen.scopes[i].syms
       if gen.scopes[i].context == gen.context and
          name.ident in gen.scopes[i].syms:
         result = gen.scopes[i].syms[name.ident]
         break
-  elif name.ident in gen.module.syms:
-    # try to find a global symbol
+  # if not found, try to find a global symbol
+  if result == nil and name.ident in gen.module.syms:
     result = gen.module.syms[name.ident]
+  # if still not found, it's undeclared.
   if result == nil:
     expr.error(ErrUndefinedReference % $name)
   # instantiate generic symbols
@@ -1103,53 +1120,75 @@ proc collectParams(formalParams: Node): seq[ProcParam] {.codegen.} =
     for name in defs[0..^3]:
       result.add((name, ty))
 
-proc genProc(node: Node) {.codegen.} =
+proc collectGenericParams(genericParams: Node): seq[GenericParam] {.codegen.} =
+  for defs in genericParams:
+    if defs[^1].kind != nkEmpty:
+      defs.error(ErrIdentDefsValueNotAllowed)
+    let constraint =
+      if defs[^2].kind != nkEmpty: gen.lookup(defs[^2])
+      else: nil
+    for name in defs[0..^3]:
+      result.add (name, constraint)
+
+proc genProc(node: Node, isInstantiation = false): Sym {.codegen.} =
   ## Process and compile a procedure.
 
   # get some basic metadata
   let
     name = node[0]
+    genericParamsNode = node[1]
     formalParams = node[2]
     body = node[3]
-    params = gen.collectParams(formalParams)
-  # get the return type
-  # empty return type == void
-  let
-    returnTy =
-      if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
-      else: gen.module.sym"void"
-  # add a new proc to the module and script, create a chunk for it, and generate
-  # its code
-  var
-    theProc = gen.script.addProc(gen.module, name, impl = node,
-                                 params, returnTy, kind = pkNative)
-    chunk = newChunk()
-    procGen = initCodeGen(gen.script, gen.module, chunk, gkProc)
-  chunk.file = gen.chunk.file
-  procGen.procReturnTy = returnTy
-  # add the proc's parameters as locals
-  # TODO: closures and upvalues
-  procGen.pushScope()
-  for param in params:
-    let param = procGen.declareVar(param.name, skLet, param.ty)
-    param.varSet = true # do not let arguments be overwritten
-  # declare ``result`` if applicable
-  if returnTy.tyKind != tkVoid:
-    procGen.declareVar(newIdent("result"), skVar, returnTy, isMagic = true)
-    procGen.pushDefault(returnTy)
-    procGen.popVar(newIdent("result"))
-  # compile the proc's body
-  discard procGen.genBlock(body, isStmt = true)
-  # finally, return ``result`` if applicable
-  if returnTy.tyKind != tkVoid:
-    let resultSym = procGen.lookup(newIdent("result"))
-    procGen.chunk.emit(opcPushL)
-    procGen.chunk.emit(resultSym.varStackPos.uint8)
-    procGen.chunk.emit(opcReturnVal)
+  # add a new proc to the module and script, create a chunk for it, and
+  # generate its code
+  if not isInstantiation and genericParamsNode.kind != nkEmpty:
+    # if the proc is generic, we don't generate it straight away.
+    # generics function as templates for on-demand code generation, so we create
+    # a generic template symbol here.
+    let genericParams = gen.collectGenericParams(genericParamsNode)
+    var sym = newSym(skProc, name, impl = node)
+    sym.procId = ProcNoImpl
+    sym.genericParams = genericParams
+    gen.addSym(sym, name)
   else:
-    procGen.chunk.emit(opcReturnVoid)
-  # we're done with generating the chunk
-  theProc.chunk = chunk
+    let
+      params = gen.collectParams(formalParams)
+      returnTy = # empty return type == void
+        if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
+        else: gen.module.sym"void"
+    var
+      (theProc, sym) = gen.script.addProc(gen.module, name, impl = node,
+                                          params, returnTy, kind = pkNative,
+                                          addSym = not isInstantiation)
+      chunk = newChunk()
+      procGen = gen.clone(kind = gkProc)
+    chunk.file = gen.chunk.file
+    procGen.chunk = chunk
+    procGen.procReturnTy = returnTy
+    # add the proc's parameters as locals
+    # TODO: closures and upvalues
+    procGen.pushScope()
+    for param in params:
+      let param = procGen.declareVar(param.name, skLet, param.ty)
+      param.varSet = true # do not let arguments be overwritten
+    # declare ``result`` if applicable
+    if returnTy.tyKind != tkVoid:
+      procGen.declareVar(newIdent("result"), skVar, returnTy, isMagic = true)
+      procGen.pushDefault(returnTy)
+      procGen.popVar(newIdent("result"))
+    # compile the proc's body
+    discard procGen.genBlock(body, isStmt = true)
+    # finally, return ``result`` if applicable
+    if returnTy.tyKind != tkVoid:
+      let resultSym = procGen.lookup(newIdent("result"))
+      procGen.chunk.emit(opcPushL)
+      procGen.chunk.emit(resultSym.varStackPos.uint8)
+      procGen.chunk.emit(opcReturnVal)
+    else:
+      procGen.chunk.emit(opcReturnVoid)
+    # we're done with generating the chunk
+    theProc.chunk = chunk
+    result = sym
 
 proc genExpr(node: Node): Sym {.codegen.} =
   ## Generates code for an expression.
@@ -1320,19 +1359,34 @@ proc genYield(node: Node) {.codegen.} =
   gen.popFlowBlock()
   gen.context = myCtx
 
+proc createObject(node: Node, isInstantiation = false): Sym {.codegen.} =
+  ## Create an object symbol from a Node.
+
+  # create a new type for the object
+  result = newType(tkObject, node[0])
+  result.impl = node
+  result.objectId = gen.script.typeCount
+  inc(gen.script.typeCount)
+  # collect its generic params
+  if not isInstantiation and node[1].kind != nkEmpty:
+    result.genericParams.add(gen.collectGenericParams(node[1]))
+  # if the object is not generic, create a concrete object right away
+  else:
+    for fields in node[2]:
+      # get the fields' type
+      let fieldsTy = gen.lookup(fields[^2])
+      # create all the fields with the given type
+      for name in fields[0..^3]:
+        result.objectFields.add(name.ident,
+                                (id: result.objectFields.len,
+                                 name: name,
+                                 ty: fieldsTy))
+
 proc genObject(node: Node): Sym {.codegen.} =
   ## Process an object declaration, and add the new type into the current
   ## module or scope.
-
-  let ty = gen.createObject(node)
-  if gen.scopes.len > 0:
-    # local type
-    if not gen.currentScope.add(ty):
-      node[0].error(ErrLocalRedeclaration % [$node[0]])
-  else:
-    # global type
-    if not gen.module.add(ty):
-      node[0].error(ErrGlobalRedeclaration % [$node[0]])
+  result = gen.createObject(node)
+  gen.addSym(result, node[0])
 
 proc genIterator(node: Node) {.codegen.} =
   ## Process an iterator declaration, and add it into the current module or
@@ -1353,14 +1407,7 @@ proc genIterator(node: Node) {.codegen.} =
   # fill in the iterator
   iterSym.iterParams = params
   iterSym.iterYieldTy = yieldTy
-  if gen.scopes.len > 0:
-    # local iterator
-    if not gen.currentScope.add(iterSym):
-      node[0].error(ErrLocalRedeclaration % [$node[0]])
-  else:
-    # global iterator
-    if not gen.module.add(iterSym):
-      node[0].error(ErrGlobalRedeclaration % [$node[0]])
+  gen.addSym(iterSym, node[0])
 
 proc genStmt(node: Node) {.codegen.} =
   ## Generate code for a statement.
@@ -1395,7 +1442,7 @@ proc genStmt(node: Node) {.codegen.} =
   of nkContinue: gen.genContinue(node) # continue statement
   of nkReturn: gen.genReturn(node) # return statement
   of nkYield: gen.genYield(node) # yield statement
-  of nkProc: gen.genProc(node) # procedure declaration
+  of nkProc: discard gen.genProc(node) # procedure declaration
   of nkIterator: gen.genIterator(node) # iterator declaration
   of nkObject: discard gen.genObject(node) # object declaration
   else: # expression statement

@@ -100,17 +100,47 @@ proc add*(node: Node, children: openarray[Node]): Node {.discardable.} =
   node.children.add(children)
   result = node
 
+proc `$`*(node: Node): string
+
+proc addSeparated(dest: var string, nodes: seq[Node], sep = ", ") =
+  for i, n in nodes:
+    dest.add($n)
+    if i != nodes.len - 1:
+      dest.add(sep)
+
 proc `$`*(node: Node): string =
   ## Stringify a node. This only supports leaf nodes, for trees,
   ## use ``treeRepr``.
-  assert node.kind in LeafNodes, "only leaf nodes can be `$`'ed"
   case node.kind
   of nkEmpty: result = ""
   of nkBool: result = $node.boolVal
   of nkNumber: result = $node.numberVal
   of nkString: result = node.stringVal
   of nkIdent: result = node.ident
-  else: discard
+  of nkBlock:
+    result = "{\n"
+    for child in node:
+      result.add(indent($child, 2))
+    result.add("\n}")
+  of nkIdentDefs:
+    result.addSeparated(node[0..^3])
+    if node[^2].kind != nkEmpty: result.add(": " & $node[^2])
+    if node[^1].kind != nkEmpty: result.add(" = " & $node[^1])
+  # of nkFormalParams:
+  of nkGenericParams:
+    result = "["
+    result.addSeparated(node.children)
+    result.add("]")
+  # of nkRecFields:
+  # of nkPrefix:
+  # of nkInfix:
+  # of nkDot:
+  # of nkColon:
+  of nkIndex:
+    result = $node[0] & "["
+    result.addSeparated(node[1..^1])
+    result.add("]")
+  else: assert false, "unsupported AST node for `$`: " & $node.kind
 
 proc treeRepr*(node: Node): string =
   ## Stringify a node into a tree representation.
