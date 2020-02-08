@@ -30,6 +30,8 @@ const
   ErrTypeMismatch = "Type mismatch: got <$1>, but expected <$2>"
   ErrTypeMismatchChoice = "Type mismatch: got <$1>, but expected one of:$2"
   ErrNotAProc = "'$1' is not a proc"
+  ErrNotAVar = "'$1' is not a variable"
+  ErrNotAType = "'$1' is not a type"
   ErrInvalidField = "'$1' is not a valid field"
   ErrNonExistentField = "Field '$1' does not exist"
   ErrInvalidAssignment = "Cannot assign to '$1'"
@@ -684,8 +686,6 @@ proc lookup(gen: var CodeGen, expr: Node): Sym =
     for param in expr[1..^1]:
       genericParams.add(gen.lookup(param))
     result = gen.instantiate(result, genericParams, errorExpr = expr)
-  if not result.isConcrete:
-    expr.error(ErrSymIsNotConcrete % [$expr, "type"])
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -936,6 +936,7 @@ proc infix(node: Node): Sym {.codegen.} =
         let
           sym = gen.lookup(node[1]) # look the variable up
           valTy = gen.genExpr(node[2]) # generate the value
+        if sym.kind notin skVars: node[1].error(ErrNotAVar % $node[1])
         if valTy == sym.varTy:
           # if the variable's type matches the type of the value, we're ok
           gen.popVar(node[1])
@@ -994,7 +995,7 @@ proc infix(node: Node): Sym {.codegen.} =
 proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   ## Generate code for an object constructor.
   result = gen.lookup(node[0]) # find the object type that's being constructed
-  if result.tyKind != tkObject:
+  if result.kind != skType and result.tyKind != tkObject:
     node.error(ErrTypeIsNotAnObject % $result.name)
   if node.len - 1 != result.objectFields.len:
     # TODO: allow the user to not initialize some fields, and set them to their
@@ -1125,6 +1126,8 @@ proc collectParams(formalParams: Node): seq[ProcParam] {.codegen.} =
   ## seq[ProcParam].
   for defs in formalParams[1..^1]:
     let ty = gen.lookup(defs[^2])
+    if not ty.isConcrete:
+      defs[^2].error(ErrSymIsNotConcrete % [$defs[^2], "type"])
     for name in defs[0..^3]:
       result.add((name, ty))
 
@@ -1164,6 +1167,8 @@ proc genProc(node: Node, isInstantiation = false): Sym {.codegen.} =
       returnTy = # empty return type == void
         if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
         else: gen.module.sym"void"
+    if not returnTy.isConcrete:
+      formalParams[0].error(ErrSymIsNotConcrete % [$formalParams[0], "type"])
     var
       (theProc, sym) = gen.script.addProc(gen.module, name, impl = node,
                                           params, returnTy, kind = pkNative,
@@ -1205,6 +1210,8 @@ proc genExpr(node: Node): Sym {.codegen.} =
     result = gen.pushConst(node)
   of nkIdent: # variables
     var varSym = gen.lookup(node)
+    if varSym.kind notin skVars:
+      node.error(ErrNotAVar % $node)
     gen.pushVar(varSym)
     result = varSym.varTy
   of nkPrefix: # prefix operators
@@ -1383,6 +1390,10 @@ proc createObject(node: Node, isInstantiation = false): Sym {.codegen.} =
     for fields in node[2]:
       # get the fields' type
       let fieldsTy = gen.lookup(fields[^2])
+      if fieldsTy.kind != skType:
+        fields[^2].error(ErrNotAType % $fields[^2])
+      if not fieldsTy.isConcrete:
+        fields[^2].error(ErrSymIsNotConcrete % [$fields[^2], "type"])
       # create all the fields with the given type
       for name in fields[0..^3]:
         result.objectFields.add(name.ident,
@@ -1415,6 +1426,8 @@ proc genIterator(node: Node, isInstantiation = false): Sym {.codegen.} =
     if formalParams[0].kind == nkEmpty:
       node.error(ErrIterMustHaveYieldType)
     let yieldTy = gen.lookup(formalParams[0])
+    if yieldTy.kind != skType:
+      formalParams[0].error(ErrNotAType % $formalParams[0])
     if yieldTy.tyKind == tkVoid:
       node.error(ErrIterMustHaveYieldType)
     # fill in the iterator's info
