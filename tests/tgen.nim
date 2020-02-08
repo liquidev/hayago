@@ -146,3 +146,21 @@ suite "compiler":
 
       print[number](2)
     """)
+  test "generic iterators":
+    compile("""
+      object Quad[T] {
+        a, b, c, d: T
+      }
+
+      iterator vertices[T](q: Quad[T]) -> T {
+        yield q.a
+        yield q.b
+        yield q.c
+        yield q.d
+      }
+
+      var quad = Quad[number](a: 1, b: 2, c: 3, d: 4)
+      for vert in vertices[number](quad) {
+        echo($vert)
+      }
+    """)
