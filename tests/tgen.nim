@@ -14,7 +14,18 @@ template benchmark(name, body) =
   body
   echo name, " took ", (epochTime() - t0) * 1000, "ms"
 
+template dumpTokens(input: string) =
+  var
+    scanner = initScanner(input, "dump.rod")
+    token: Token
+  while true:
+    token = scanner.next()
+    echo token
+    if token.kind == tokEnd:
+      break
+
 template compile(input: string) =
+  dumpTokens(input)
   benchmark("compilation"):
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
@@ -26,6 +37,7 @@ template compile(input: string) =
       cp = initCodeGen(script, module, main)
     module.load(system)
     cp.genScript(ast)
+  echo ast.treeRepr
   echo module
   echo `$`(script, {
     "system.rod": RodlibSystemSrc,
@@ -105,18 +117,6 @@ suite "compiler":
       var x = instance.x
       instance.y = 30
     """)
-  test "generic objects":
-    compile("""
-      object Pair[T, U] {
-        a: T
-        b: U
-      }
-
-      var x = Pair[number, string](a: 1, b: "hello")
-
-      proc typeTest(a: Pair) {}
-      typeTest(x)
-    """)
   test "procs":
     compile("""
       echo("Hello!")
@@ -136,31 +136,5 @@ suite "compiler":
           result = result * i
           i = i + 1
         }
-      }
-    """)
-  test "generic procs":
-    compile("""
-      proc print[T](x: T) {
-        echo($x)
-      }
-
-      print[number](2)
-    """)
-  test "generic iterators":
-    compile("""
-      object Quad[T] {
-        a, b, c, d: T
-      }
-
-      iterator vertices[T](q: Quad[T]) -> T {
-        yield q.a
-        yield q.b
-        yield q.c
-        yield q.d
-      }
-
-      var quad = Quad[number](a: 1, b: 2, c: 3, d: 4)
-      for vert in vertices[number](quad) {
-        echo($vert)
       }
     """)
