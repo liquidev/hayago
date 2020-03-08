@@ -491,11 +491,11 @@ proc addSym(gen: var CodeGen, sym: Sym, lookupName: Node = nil) =
     else: sym.name
   if gen.scopes.len > 0:
     # local sym
-    if not gen.currentScope.add(sym):
+    if not gen.currentScope.add(sym, lookupName):
       name.error(ErrLocalRedeclaration % [$name])
   else:
     # global sym
-    if not gen.module.add(sym):
+    if not gen.module.add(sym, lookupName):
       name.error(ErrGlobalRedeclaration % [$name])
 
 proc pushFlowBlock(gen: var CodeGen, kind: FlowBlockKind,
