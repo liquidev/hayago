@@ -138,3 +138,10 @@ suite "compiler":
         }
       }
     """)
+  test "generic objects":
+    compile("""
+      object Pair[T, U] {
+        a: T
+        b: U
+      }
+    """)

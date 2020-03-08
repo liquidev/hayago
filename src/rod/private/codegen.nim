@@ -5,6 +5,7 @@
 #--
 
 import macros
+import options
 import strutils
 import tables
 
@@ -54,38 +55,38 @@ const
 #--
 
 type
-  Context = distinct int ## A scope context.
-  Scope = ref object of RootObj ## A local scope.
+  Context = distinct int  ## A scope context.
+  Scope = ref object of RootObj  ## A local scope.
     syms: Table[string, Sym]
-    context: Context ## The scope's context. This is used for scope hygiene.
-  Module* = ref object of Scope ## \
-      ## A module representing the global scope of a single source file.
-    name: string ## The name of the module.
-  SymKind = enum ## The kind of a symbol.
+    context: Context  ## The scope's context. This is used for scope hygiene.
+  Module* = ref object of Scope  ## A module representing the global scope of a
+                                 ## single source file.
+    name: string  ## The name of the module.
+  SymKind = enum  ## The kind of a symbol.
     skVar = "var"
     skLet = "let"
     skType = "type"
     skProc = "proc"
     skIterator = "iterator"
-    skChoice = "(...)" ## An overloaded symbol, stores many symbols with \
-                       ## the same name.
-  TypeKind = enum ## The kind of a type.
+    skGenericParam = "generic param"
+    skChoice = "(...)"  ## An overloaded symbol, stores many symbols with \
+                        ## the same name.
+  TypeKind = enum  ## The kind of a type.
     tkVoid = "void"
     tkBool = "bool"
     tkNumber = "number"
     tkString = "string"
     tkObject = "object"
-  Sym = ref object ## A symbol.
-    name: Node ## The name of the symbol.
-    impl: Node ## \
-      ## The implementation of the symbol. May be ``nil`` if the
-      ## symbol is generated.
+  Sym = ref object  ## A symbol.
+    name: Node  ## The name of the symbol.
+    impl: Node  ## The implementation of the symbol. May be ``nil`` if the \
+                ## symbol is generated.
     case kind: SymKind
     of skVar, skLet:
-      varTy: Sym ## The type of the variable.
-      varSet: bool ## Is the variable set?
-      varLocal: bool ## Is the variable local?
-      varStackPos: int ## The position of a local variable on the stack.
+      varTy: Sym        ## The type of the variable.
+      varSet: bool      ## Is the variable set?
+      varLocal: bool    ## Is the variable local?
+      varStackPos: int  ## The position of a local variable on the stack.
     of skType:
       case tyKind: TypeKind
       of tkVoid..tkString: discard
@@ -93,14 +94,19 @@ type
         objectId: TypeId
         objectFields: Table[string, ObjectField]
     of skProc:
-      procId: uint16 ## The unique number of the proc.
-      procParams: seq[ProcParam] ## The proc's parameters.
-      procReturnTy: Sym ## The return type of the proc.
+      procId: uint16              ## The unique number of the proc.
+      procParams: seq[ProcParam]  ## The proc's parameters.
+      procReturnTy: Sym           ## The return type of the proc.
     of skIterator:
-      iterParams: seq[ProcParam] ## The iterator's parameters.
-      iterYieldTy: Sym ## The yield type of the iterator.
+      iterParams: seq[ProcParam]  ## The iterator's parameters.
+      iterYieldTy: Sym            ## The yield type of the iterator.
+    of skGenericParam:
+      constraint: Sym  ## The generic type constraint.
     of skChoice:
-      choices: seq[Sym] ## The choices.
+      choices: seq[Sym]  ## The choices.
+    genericParams*: Option[seq[Sym]]   # none if the sym is not generic
+    genericInstCache*: Table[seq[Sym], Sym]
+    genericInstArgs*: Option[seq[Sym]] # none if the sym is not an instantiation
   ObjectField = tuple
     id: int
     name: Node
@@ -112,6 +118,7 @@ type
 const
   skVars = {skVar, skLet}
   skCallable = {skProc, skIterator}
+  skDecl = {skType} + skCallable
   tkPrimitives = {tkVoid..tkString}
 
 proc `==`(a, b: Context): bool {.borrow.}
@@ -133,7 +140,12 @@ proc `$`(sym: Sym): string =
   of skLet:
     result = "let of type " & sym.varTy.name.ident
   of skType:
-    result = "type = "
+    result = "type"
+    if sym.genericParams.isSome:
+      result.add('[')
+      result.add(sym.genericParams.get.join(", "))
+      result.add(']')
+    result.add(" = ")
     case sym.tyKind
     of tkPrimitives: result.add($sym.tyKind)
     of tkObject:
@@ -145,6 +157,10 @@ proc `$`(sym: Sym): string =
     result = "proc " & $sym.name & "{" & $sym.procId & "}" & $sym.procParams
   of skIterator:
     result = "iterator " & $sym.name & $sym.iterParams
+  of skGenericParam:
+    result = $sym.name
+    if sym.constraint != nil:
+      result.add(": " & $sym.constraint)
   of skChoice:
     result = "choice between " & $sym.choices.len & " {"
     for choice in sym.choices:
@@ -159,9 +175,9 @@ proc genSym(kind: SymKind, name: string): Sym =
   ## Generate a new symbol from a string name.
   result = Sym(name: newIdent(name), kind: kind)
 
-proc newType(kind: TypeKind, name: Node): Sym =
+proc newType(kind: TypeKind, name: Node, impl: Node = nil): Sym =
   ## Create a new type symbol from a Node.
-  result = Sym(name: name, kind: skType, tyKind: kind)
+  result = Sym(name: name, impl: impl, kind: skType, tyKind: kind)
 
 proc genType(kind: TypeKind, name: string): Sym =
   ## Generate a new type symbol from a string name.
@@ -172,7 +188,7 @@ proc canAdd(choice, sym: Sym): bool =
   ## Tests if ``sym`` can be added into ``choice``. Refer to ``add``
   ## documentation below for details.
   assert choice.kind == skChoice
-  assert sym.kind != skChoice, "an skChoice is not recursive"
+  assert sym.kind in skDecl
   case sym.kind
   of skVars:
     for other in choice.choices:
@@ -190,14 +206,14 @@ proc canAdd(choice, sym: Sym): bool =
         result = false
         for i, (_, ty) in sym.procParams:
           if ty != other.procParams[i].ty: return true
-  of skChoice: discard
+  of skGenericParam, skChoice: discard
 
 proc add(scope: Scope, sym: Sym): bool =
   ## Add a symbol to the given scope. If a symbol under the given name already
   ## exists, it's added into an skChoice. The rules for overloading are:
   ## - there may only be one skVar or skLet under a given skChoice,
   ## - there may only be one skType under a given skChoice,
-  ## - there may be any number of skProcs with unique parameter lists under a
+  ## - there may be any number of skProcs with unique parameters under a
   ##   single skChoice.
   ## If any one of these checks fails, the proc will return ``false``.
   let name = sym.name.ident
@@ -427,6 +443,21 @@ proc popScope(gen: var CodeGen) =
     gen.chunk.emit(gen.currentScope.varCount.uint8)
   discard gen.scopes.pop()
 
+proc addSym(gen: var CodeGen, sym: Sym, lookupName: Node = nil) =
+  ## Add a symbol to a scope. If ``name.len != 0``, ``$name`` is used as the
+  ## symbol's lookup name instead of ``$sym.name``.
+  let name =
+    if lookupName != nil: lookupName
+    else: sym.name
+  if gen.scopes.len > 0:
+    # local sym
+    if not gen.currentScope.add(sym):
+      name.error(ErrLocalRedeclaration % [$name])
+  else:
+    # global sym
+    if not gen.module.add(sym):
+      name.error(ErrGlobalRedeclaration % [$name])
+
 proc pushFlowBlock(gen: var CodeGen, kind: FlowBlockKind,
                    context = Context(-1)) =
   ## Push a new flow block. This creates a new scope for the flow block.
@@ -481,17 +512,10 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
   result = newSym(kind, name)
   result.varTy = ty
   result.varSet = false
-  if gen.scopes.len > 0:
-    # declare a local
-    result.varLocal = true
+  result.varLocal = gen.scopes.len > 0
+  if result.varLocal:
     result.varStackPos = gen.varCount
-    if not gen.currentScope.add(result):
-      name.error(ErrLocalRedeclaration % $name)
-  else:
-    # declare a global
-    result.varLocal = false
-    if not gen.module.add(result):
-      name.error(ErrGlobalRedeclaration % $name)
+  gen.addSym(result)
 
 proc lookup(gen: CodeGen, name: Node): Sym =
   ## Look up the symbol with the given ``name``.
@@ -955,6 +979,22 @@ proc collectParams(formalParams: Node): seq[ProcParam] {.codegen.} =
     for name in defs[0..^3]:
       result.add((name, ty))
 
+proc collectGenericParams(genericParams: Node, targetSym: Sym) {.codegen.} =
+  ## Helper used to collect and declare generic parameters from an
+  ## nkGenericParams. The collected generic params are added to ``targetSym``'s
+  ## generic param list.
+  var params: seq[Sym]
+  for defs in genericParams:
+    let constraint =
+      if defs[^2].kind == nkEmpty: nil
+      else: gen.lookup(defs[^2])
+    for name in defs[0..^3]:
+      let sym = newSym(skGenericParam, name, impl = nil)
+      sym.constraint = constraint
+      gen.addSym(sym)
+      params.add(sym)
+  targetSym.genericParams = some(params)
+
 proc genProc(node: Node) {.codegen.} =
   ## Process and compile a procedure.
 
@@ -1177,8 +1217,16 @@ proc genObject(node: Node) {.codegen.} =
   ## module or scope.
 
   # create a new type for the object
-  var ty = newType(tkObject, node[0])
+  var ty = newType(tkObject, name = node[0], impl = node)
   ty.impl = node
+
+  # check if the object is generic
+  if node[1].kind != nkEmpty:
+    # if so, create a new scope for its generic params and collect them
+    gen.pushScope()
+    gen.collectGenericParams(node[1], ty)
+
+  # process the object's fields
   ty.objectId = gen.script.typeCount
   inc(gen.script.typeCount)
   for fields in node[2]:
@@ -1188,14 +1236,11 @@ proc genObject(node: Node) {.codegen.} =
     for name in fields[0..^3]:
       ty.objectFields.add(name.ident,
                           (id: ty.objectFields.len, name: name, ty: fieldsTy))
-  if gen.scopes.len > 0:
-    # local type
-    if not gen.currentScope.add(ty):
-      node[0].error(ErrLocalRedeclaration % [$node[0]])
-  else:
-    # global type
-    if not gen.module.add(ty):
-      node[0].error(ErrGlobalRedeclaration % [$node[0]])
+
+  # if the object had generic params, pop their scope
+  if ty.genericParams.isSome:
+    gen.popScope()
+  gen.addSym(ty)
 
 proc genIterator(node: Node) {.codegen.} =
   ## Process an iterator declaration, and add it into the current module or
@@ -1216,14 +1261,7 @@ proc genIterator(node: Node) {.codegen.} =
   # fill in the iterator
   iterSym.iterParams = params
   iterSym.iterYieldTy = yieldTy
-  if gen.scopes.len > 0:
-    # local iterator
-    if not gen.currentScope.add(iterSym):
-      node[0].error(ErrLocalRedeclaration % [$node[0]])
-  else:
-    # global iterator
-    if not gen.module.add(iterSym):
-      node[0].error(ErrGlobalRedeclaration % [$node[0]])
+  gen.addSym(iterSym)
 
 proc genStmt(node: Node) {.codegen.} =
   ## Generate code for a statement.
