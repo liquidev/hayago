@@ -6,6 +6,7 @@
 
 # Parser procs (``parse*``) are annotated with pseudo-npeg rules.
 
+import hashes
 import macros
 import strformat
 import strutils
@@ -98,6 +99,18 @@ proc add*(node, child: Node): Node {.discardable.} =
 proc add*(node: Node, children: openarray[Node]): Node {.discardable.} =
   node.children.add(children)
   result = node
+
+proc hash*(node: Node): Hash =
+  var h = Hash(0)
+  h = h !& hash(node.kind)
+  case node.kind
+  of nkEmpty: discard
+  of nkBool: h = h !& hash(node.boolVal)
+  of nkNumber: h = h !& hash(node.numberVal)
+  of nkString: h = h !& hash(node.stringVal)
+  of nkIdent: h = h !& hash(node.ident)
+  else: h = h !& hash(node.children)
+  result = h
 
 proc `$`*(node: Node): string =
   ## Stringify a node. This only supports leaf nodes, for trees,

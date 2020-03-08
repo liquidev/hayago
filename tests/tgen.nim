@@ -140,8 +140,9 @@ suite "compiler":
     """)
   test "generic objects":
     compile("""
-      object Pair[T, U] {
-        a: T
-        b: U
+      object Pair[T] {
+        a, b: T
       }
+
+      var p = Pair[number](a: 1, b: 2)
     """)

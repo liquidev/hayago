@@ -4,6 +4,7 @@
 # licensed under the MIT license
 #--
 
+import hashes
 import macros
 import options
 import strutils
@@ -38,8 +39,6 @@ const
   ErrFieldInitMustBeAColonExpr =
     "Field initializer must be a colon expression: 'a: b'"
   ErrNoSuchField = "<$1> does not have the field '$2'"
-  ErrDefaultProcParamsUnsupported =
-    "Default proc parameters are not yet supported"
   ErrValueIsVoid = "Value does not have a valid type"
   ErrOnlyUsableInABlock =
     "'$1' can only be used inside a loop or a block statement"
@@ -49,6 +48,11 @@ const
   ErrVarMustHaveValue = "Variable must have a value"
   ErrIterMustHaveYieldType = "Iterator must have a non-void yield type"
   ErrSymKindMismatch = "$1 expected, but got $2"
+  ErrInvalidSymName = "'$1' is not a valid symbol name"
+  ErrCouldNotInferGeneric =
+    "Could not infer generic params for '$1'. Specify them explicitly"
+  ErrNotGeneric = "'$1' is not generic"
+  ErrGenericArgLenMismatch = "Got $1 generic arguments, but expected $2"
 
 #--
 # Compile-time info
@@ -104,9 +108,9 @@ type
       constraint: Sym  ## The generic type constraint.
     of skChoice:
       choices: seq[Sym]  ## The choices.
-    genericParams*: Option[seq[Sym]]   # none if the sym is not generic
+    genericParams*: Option[seq[Sym]]    # some if the sym is generic
     genericInstCache*: Table[seq[Sym], Sym]
-    genericInstArgs*: Option[seq[Sym]] # none if the sym is not an instantiation
+    genericInstArgs*: Option[seq[Sym]]  # some if the sym is an instantiation
   ObjectField = tuple
     id: int
     name: Node
@@ -167,6 +171,40 @@ proc `$`(sym: Sym): string =
       result.add(" " & $choice & ",")
     result.add(" }")
 
+proc isGeneric*(sym: Sym): bool =
+  ## Returns whether the symbol is generic or not.
+  result = sym.genericParams.isSome
+
+proc isInstantiation*(sym: Sym): bool =
+  ## Returns whether the symbol is an instantiation.
+  result = sym.genericInstArgs.isSome
+
+proc hash(sym: Sym): Hash =
+  ## Hashes a sym (for use in Tables).
+  var h = Hash(0)
+  h = h !& hash(sym.name)
+  case sym.kind
+  of skVar, skLet:
+    h = h !& hash(sym.varTy) !& hash(sym.varLocal) !& hash(sym.varStackPos)
+  of skType:
+    h = h !& hash(sym.tyKind)
+    if sym.tyKind == tkObject:
+      h = h !& hash(sym.objectId)
+  of skProc:
+    h = h !& hash(sym.procId)
+  of skIterator:
+    h = h !& hash(sym.iterParams)
+    h = h !& hash(sym.iterYieldTy)
+  of skGenericParam:
+    h = h !& hash(sym.constraint)
+  of skChoice:
+    h = h !& hash(sym.choices)
+  if sym.isGeneric:
+    h = h !& hash(sym.genericParams.get)
+  if sym.isInstantiation:
+    h = h !& hash(sym.genericInstArgs.get)
+  result = h
+
 proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
   ## Create a new symbol from a Node.
   result = Sym(name: name, impl: impl, kind: kind)
@@ -208,7 +246,7 @@ proc canAdd(choice, sym: Sym): bool =
           if ty != other.procParams[i].ty: return true
   of skGenericParam, skChoice: discard
 
-proc add(scope: Scope, sym: Sym): bool =
+proc add(scope: Scope, sym: Sym, lookupName: Node = nil): bool =
   ## Add a symbol to the given scope. If a symbol under the given name already
   ## exists, it's added into an skChoice. The rules for overloading are:
   ## - there may only be one skVar or skLet under a given skChoice,
@@ -216,7 +254,9 @@ proc add(scope: Scope, sym: Sym): bool =
   ## - there may be any number of skProcs with unique parameters under a
   ##   single skChoice.
   ## If any one of these checks fails, the proc will return ``false``.
-  let name = sym.name.ident
+  let name =
+    if lookupName == nil: sym.name.ident
+    else: lookupName.ident
   if name notin scope.syms:
     scope.syms[name] = sym
     result = true
@@ -517,18 +557,82 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
     result.varStackPos = gen.varCount
   gen.addSym(result)
 
-proc lookup(gen: CodeGen, name: Node): Sym =
+proc lookup(gen: var CodeGen, symName: Node): Sym
+
+proc genObject(node: Node, isInstantiation = false): Sym {.codegen.}
+
+proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
+                 errorNode: Node): Sym =
+  ## Instantiate a generic symbol using the given ``params``.
+  assert sym.genericParams.isSome, "symbol must be generic"
+
+  # if an instantiation has already been made, return it
+  if args in sym.genericInstCache:
+    result = sym.genericInstCache[args]
+  # otherwise, we need to create the instantiation from scratch
+  else:
+    # we need to create a temporary scope for the resulting instantiation and
+    # the generic arguments
+    gen.pushScope()
+    # and of course, in that scope, we add those generic arguments
+    if args.len != sym.genericParams.get.len:
+      errorNode.error(ErrGenericArgLenMismatch %
+                      [$args.len, $sym.genericParams.get.len])
+    for i, param in sym.genericParams.get:
+      gen.addSym(args[i], lookupName = param.name)
+
+    case sym.kind
+    of skType:
+      # instantiations are only special for objects
+      if sym.tyKind == tkObject:
+        result = gen.genObject(sym.impl, isInstantiation = true)
+      # anything else is merely a copy that makes a given type distinct for the
+      # given generic arguments
+      else:
+        new(result)
+        result[] = sym[]
+        result.genericParams = seq[Sym].none
+        result.genericInstCache.clear()
+        result.genericInstArgs = some(args)
+    else:
+      errorNode.error(ErrNotGeneric % $errorNode)
+
+    gen.popScope()
+
+proc lookup(gen: var CodeGen, symName: Node): Sym =
   ## Look up the symbol with the given ``name``.
+
+  # find out the symbol's name
+  var name: Node
+  case symName.kind
+  of nkIdent: name = symName     # regular ident
+  of nkIndex: name = symName[0]  # generic instantiation
+  else: discard
+  if name == nil or name.kind != nkIdent:
+    symName.error(ErrInvalidSymName % $symName)
+
+  # try to find a local symbol
   if gen.scopes.len > 0:
-    # try to find a local symbol
     for i in countdown(gen.scopes.len - 1, 0):
       if gen.scopes[i].context == gen.context and
          name.ident in gen.scopes[i].syms:
-        return gen.scopes[i].syms[name.ident]
-  if name.ident in gen.module.syms:
-    # try to find a global symbol
-    return gen.module.syms[name.ident]
-  name.error(ErrUndefinedReference % $name)
+        result = gen.scopes[i].syms[name.ident]
+  # try to find a global symbol if no local symbol was found
+  if result == nil and name.ident in gen.module.syms:
+    result = gen.module.syms[name.ident]
+  # if we still don't have a sym, it doesn't exist.
+  if result == nil:
+    name.error(ErrUndefinedReference % $name)
+
+  # if the symbol is generic, try to instantiate it.
+  if result.genericParams.isSome:
+    var genericParams: seq[Sym]
+    if symName.kind == nkIndex:
+      for param in symName[1..^1]:
+        genericParams.add(gen.lookup(param))
+    else:
+      symName.error(ErrCouldNotInferGeneric % $symName)
+    result = gen.instantiate(result, genericParams, errorNode = name)
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -844,7 +948,7 @@ proc infix(node: Node): Sym {.codegen.} =
 
 proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   ## Generate code for an object constructor.
-  result = gen.lookup(node[0]) # find the object type that's being constructed
+  result = gen.lookup(node[0])  # find the object type that's being constructed
   if result.tyKind != tkObject:
     node.error(ErrTypeIsNotAnObject % $result.name)
   if node.len - 1 != result.objectFields.len:
@@ -867,7 +971,7 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   for (value, field) in fields:
     let ty = gen.genExpr(value)
     if ty != field.ty:
-      node.error(ErrTypeMismatch % [$field.ty.name, $ty.name])
+      node.error(ErrTypeMismatch % [$ty.name, $field.ty.name])
   # construct the object
   gen.chunk.emit(opcConstrObj)
   gen.chunk.emit(uint16(tyFirstObject + ty.objectId))
@@ -1212,35 +1316,36 @@ proc genYield(node: Node) {.codegen.} =
   gen.popFlowBlock()
   gen.context = myCtx
 
-proc genObject(node: Node) {.codegen.} =
+proc genObject(node: Node, isInstantiation = false): Sym {.codegen.} =
   ## Process an object declaration, and add the new type into the current
   ## module or scope.
 
   # create a new type for the object
-  var ty = newType(tkObject, name = node[0], impl = node)
-  ty.impl = node
+  result = newType(tkObject, name = node[0], impl = node)
+  result.impl = node
 
   # check if the object is generic
-  if node[1].kind != nkEmpty:
+  if not isInstantiation and node[1].kind != nkEmpty:
     # if so, create a new scope for its generic params and collect them
     gen.pushScope()
-    gen.collectGenericParams(node[1], ty)
+    gen.collectGenericParams(node[1], result)
 
   # process the object's fields
-  ty.objectId = gen.script.typeCount
+  result.objectId = gen.script.typeCount
   inc(gen.script.typeCount)
   for fields in node[2]:
     # get the fields' type
     let fieldsTy = gen.lookup(fields[^2])
     # create all the fields with the given type
     for name in fields[0..^3]:
-      ty.objectFields.add(name.ident,
-                          (id: ty.objectFields.len, name: name, ty: fieldsTy))
+      result.objectFields.add(name.ident,
+                              (id: result.objectFields.len,
+                               name: name, ty: fieldsTy))
 
   # if the object had generic params, pop their scope
-  if ty.genericParams.isSome:
+  if not isInstantiation and result.isGeneric:
     gen.popScope()
-  gen.addSym(ty)
+  gen.addSym(result)
 
 proc genIterator(node: Node) {.codegen.} =
   ## Process an iterator declaration, and add it into the current module or
@@ -1298,7 +1403,7 @@ proc genStmt(node: Node) {.codegen.} =
   of nkYield: gen.genYield(node) # yield statement
   of nkProc: gen.genProc(node) # procedure declaration
   of nkIterator: gen.genIterator(node) # iterator declaration
-  of nkObject: gen.genObject(node) # object declaration
+  of nkObject: discard gen.genObject(node) # object declaration
   else: # expression statement
     let ty = gen.genExpr(node)
     if ty != gen.module.sym"void":
