@@ -120,7 +120,7 @@ type
 const
   skVars = {skVar, skLet}
   skCallable = {skProc, skIterator}
-  skDecl = {skType} + skCallable
+  skDecl = {skType} + skCallable + skVars
   tkPrimitives = {tkVoid..tkString}
 
 proc `==`(a, b: Context): bool {.borrow.}
@@ -220,7 +220,7 @@ proc canAdd(choice, sym: Sym): bool =
   ## Tests if ``sym`` can be added into ``choice``. Refer to ``add``
   ## documentation below for details.
   assert choice.kind == skChoice
-  assert sym.kind in skDecl
+  if sym.kind notin skDecl: return false
   case sym.kind
   of skVars:
     for other in choice.choices:
@@ -510,6 +510,7 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
 
 proc lookup(gen: var CodeGen, symName: Node): Sym
 
+proc genProc(node: Node, isInstantiation = false): Sym {.codegen.}
 proc genObject(node: Node, isInstantiation = false): Sym {.codegen.}
 
 proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
@@ -545,9 +546,12 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
         result.genericParams = seq[Sym].none
         result.genericInstCache.clear()
         result.genericInstArgs = some(args)
+    of skProc:
+      result = gen.genProc(sym.impl, isInstantiation = true)
     else:
       errorNode.error(ErrNotGeneric % $errorNode)
 
+    # after we're done, we can remove the instantiation scope
     gen.popScope()
 
 proc lookup(gen: var CodeGen, symName: Node): Sym =
@@ -1063,7 +1067,9 @@ proc genProc(node: Node, isInstantiation = false): Sym {.codegen.} =
     name = node[0]
     formalParams = node[2]
     body = node[3]
-    genericParams = gen.collectGenericParams(node[1])
+    genericParams =
+      if not isInstantiation: gen.collectGenericParams(node[1])
+      else: seq[Sym].none
     params = gen.collectParams(formalParams)
     returnTy = # empty return type == void
       if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
