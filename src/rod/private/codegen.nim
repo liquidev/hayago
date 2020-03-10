@@ -21,8 +21,6 @@ import value
 
 const
   ErrorFmt = "$1($2, $3): $4"
-  ErrProcRedefinition =
-    "An overload with the given parameter types already exists"
   ErrShadowResult = "Variable shadows implicit 'result' variable"
   ErrLocalRedeclaration = "'$1' is already declared in this scope"
   ErrGlobalRedeclaration = "'$1' is already declared"
@@ -209,10 +207,6 @@ proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
   ## Create a new symbol from a Node.
   result = Sym(name: name, impl: impl, kind: kind)
 
-proc genSym(kind: SymKind, name: string): Sym =
-  ## Generate a new symbol from a string name.
-  result = Sym(name: newIdent(name), kind: kind)
-
 proc newType(kind: TypeKind, name: Node, impl: Node = nil): Sym =
   ## Create a new type symbol from a Node.
   result = Sym(name: name, impl: impl, kind: skType, tyKind: kind)
@@ -300,71 +294,9 @@ proc error(node: Node, msg: string) =
                        ln: node.ln, col: node.col,
                        msg: ErrorFmt % [node.file, $node.ln, $node.col, msg])
 
-proc addProc*(script: Script, module: Module, name, impl: Node,
-              params: openarray[ProcParam], returnTy: Sym,
-              kind: ProcKind, addToScript = true): Proc =
-  ## Add a procedure to the given module, belonging to the given script.
-  let
-    id = script.procs.len.uint16
-    strName =
-      if name.kind == nkEmpty: ":anonymous"
-      else: name.ident
-  result = Proc(name: strName, kind: kind,
-                paramCount: params.len,
-                hasResult: returnTy.tyKind != tkVoid)
-  if addToScript: script.procs.add(result)
-  let sym = newSym(skProc, name, impl)
-  sym.procId = id
-  sym.procParams = @params
-  sym.procReturnTy = returnTy
-  if not module.add(sym):
-    name.error(ErrProcRedefinition)
-
-proc addProc*(script: Script, module: Module, name: string,
-              params: openarray[(string, string)], returnTy: string,
-              impl: ForeignProc = nil): Proc {.discardable.} =
-  ## Add a foreign procedure to the given module, belonging to the given script.
-  var nodeParams: seq[ProcParam]
-  for param in params:
-    nodeParams.add((newIdent(param[0]), module.sym(param[1])))
-  result = script.addProc(module, newIdent(name), impl = nil,
-                          nodeParams, module.sym(returnTy), pkForeign,
-                          addToScript = impl != nil)
-  result.foreign = impl
-
 proc newModule*(name: string): Module =
   ## Initialize a new module.
   result = Module(name: name)
-
-proc initSystemTypes*(module: Module) =
-  ## Add primitive types into the module.
-  ## This should only ever be called when creating the ``system`` module.
-  for kind in tkPrimitives:
-    let name = $kind
-    discard module.add(genType(kind, name))
-
-proc initSystemOps*(script: Script, module: Module) =
-  ## Add builtin operations into the module.
-  ## This should only ever be called when creating the ``system`` module.
-
-  # unary operators
-  script.addProc(module, "not", {"x": "bool"}, "bool")
-  script.addProc(module, "+", {"x": "number"}, "number")
-  script.addProc(module, "-", {"x": "number"}, "number")
-
-  # binary operators
-  script.addProc(module, "+", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "-", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "*", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "/", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "==", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, "!=", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, "<", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, "<=", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, ">", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, ">=", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, "==", {"a": "bool", "b": "bool"}, "bool")
-  script.addProc(module, "!=", {"a": "bool", "b": "bool"}, "bool")
 
 #--
 # Code generation
@@ -498,6 +430,25 @@ proc addSym(gen: var CodeGen, sym: Sym, lookupName: Node = nil) =
     if not gen.module.add(sym, lookupName):
       name.error(ErrGlobalRedeclaration % [$name])
 
+proc newProc*(script: Script, name, impl: Node,
+              params: openarray[ProcParam], returnTy: Sym,
+              kind: ProcKind): (Sym, Proc) =
+  ## Creates a procedure for the given script. Returns its symbol and Proc
+  ## object. This does not add the procedure to the script!
+  let
+    id = script.procs.len.uint16
+    strName =
+      if name.kind == nkEmpty: ":anonymous"
+      else: name.ident
+    theProc = Proc(name: strName, kind: kind,
+                   paramCount: params.len,
+                   hasResult: returnTy.tyKind != tkVoid)
+    sym = newSym(skProc, name, impl)
+  sym.procId = id
+  sym.procParams = @params
+  sym.procReturnTy = returnTy
+  result = (sym, theProc)
+
 proc pushFlowBlock(gen: var CodeGen, kind: FlowBlockKind,
                    context = Context(-1)) =
   ## Push a new flow block. This creates a new scope for the flow block.
@@ -583,7 +534,7 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
 
     case sym.kind
     of skType:
-      # instantiations are only special for objects
+      # instantiations are only special for object types
       if sym.tyKind == tkObject:
         result = gen.genObject(sym.impl, isInstantiation = true)
       # anything else is merely a copy that makes a given type distinct for the
@@ -1083,11 +1034,13 @@ proc collectParams(formalParams: Node): seq[ProcParam] {.codegen.} =
     for name in defs[0..^3]:
       result.add((name, ty))
 
-proc collectGenericParams(genericParams: Node, targetSym: Sym) {.codegen.} =
+proc collectGenericParams(genericParams: Node): Option[seq[Sym]] {.codegen.} =
   ## Helper used to collect and declare generic parameters from an
   ## nkGenericParams. The collected generic params are added to ``targetSym``'s
   ## generic param list.
-  var params: seq[Sym]
+  if genericParams.kind == nkEmpty:
+    return
+  result = some[seq[Sym]](@[])
   for defs in genericParams:
     let constraint =
       if defs[^2].kind == nkEmpty: nil
@@ -1096,56 +1049,74 @@ proc collectGenericParams(genericParams: Node, targetSym: Sym) {.codegen.} =
       let sym = newSym(skGenericParam, name, impl = nil)
       sym.constraint = constraint
       gen.addSym(sym)
-      params.add(sym)
-  targetSym.genericParams = some(params)
+      result.get.add(sym)
 
-proc genProc(node: Node) {.codegen.} =
+proc genProc(node: Node, isInstantiation = false): Sym {.codegen.} =
   ## Process and compile a procedure.
+
+  # push a new scope for generic parameters, if any
+  if not isInstantiation and node[1].kind != nkEmpty:
+    gen.pushScope()
 
   # get some basic metadata
   let
     name = node[0]
     formalParams = node[2]
     body = node[3]
+    genericParams = gen.collectGenericParams(node[1])
     params = gen.collectParams(formalParams)
-  # get the return type
-  # empty return type == void
-  let
-    returnTy =
+    returnTy = # empty return type == void
       if formalParams[0].kind != nkEmpty: gen.lookup(formalParams[0])
       else: gen.module.sym"void"
-  # add a new proc to the module and script, create a chunk for it, and generate
-  # its code
-  var
-    theProc = gen.script.addProc(gen.module, name, impl = node,
-                                 params, returnTy, kind = pkNative)
-    chunk = newChunk()
-    procGen = initCodeGen(gen.script, gen.module, chunk, gkProc)
-  chunk.file = gen.chunk.file
-  procGen.procReturnTy = returnTy
-  # add the proc's parameters as locals
-  # TODO: closures and upvalues
-  procGen.pushScope()
-  for param in params:
-    let param = procGen.declareVar(param.name, skLet, param.ty)
-    param.varSet = true # do not let arguments be overwritten
-  # declare ``result`` if applicable
-  if returnTy.tyKind != tkVoid:
-    procGen.declareVar(newIdent("result"), skVar, returnTy, isMagic = true)
-    procGen.pushDefault(returnTy)
-    procGen.popVar(newIdent("result"))
-  # compile the proc's body
-  discard procGen.genBlock(body, isStmt = true)
-  # finally, return ``result`` if applicable
-  if returnTy.tyKind != tkVoid:
-    let resultSym = procGen.lookup(newIdent("result"))
-    procGen.chunk.emit(opcPushL)
-    procGen.chunk.emit(resultSym.varStackPos.uint8)
-    procGen.chunk.emit(opcReturnVal)
-  else:
-    procGen.chunk.emit(opcReturnVoid)
-  # we're done with generating the chunk
-  theProc.chunk = chunk
+
+  # create a new proc
+  var (sym, theProc) = gen.script.newProc(name, impl = node,
+                                          params, returnTy, kind = pkNative)
+  sym.genericParams = genericParams
+
+  # if we're in an instantiation or the proc is not generic, generate its code
+  if not sym.isGeneric or isInstantiation:
+    var
+      chunk = newChunk()
+      procGen = initCodeGen(gen.script, gen.module, chunk, gkProc)
+    theProc.chunk = chunk
+    chunk.file = gen.chunk.file
+    procGen.procReturnTy = returnTy
+
+    # add the proc's parameters as locals
+    # TODO: closures and upvalues
+    procGen.pushScope()
+    for param in params:
+      let param = procGen.declareVar(param.name, skLet, param.ty)
+      param.varSet = true  # arguments are not assignable
+    # declare ``result`` if applicable
+    if returnTy.tyKind != tkVoid:
+      procGen.declareVar(newIdent("result"), skVar, returnTy, isMagic = true)
+      procGen.pushDefault(returnTy)
+      procGen.popVar(newIdent("result"))
+
+    # compile the proc's body
+    discard procGen.genBlock(body, isStmt = true)
+
+    # finally, return ``result`` if applicable
+    if returnTy.tyKind != tkVoid:
+      let resultSym = procGen.lookup(newIdent("result"))
+      procGen.chunk.emit(opcPushL)
+      procGen.chunk.emit(resultSym.varStackPos.uint8)
+      procGen.chunk.emit(opcReturnVal)
+    else:
+      procGen.chunk.emit(opcReturnVoid)
+
+    # add the proc into the script
+    gen.script.procs.add(theProc)
+
+  # pop the generic declaration scope
+  if not isInstantiation and sym.isGeneric:
+    gen.popScope()
+
+  # add the proc into the current scope
+  gen.addSym(sym)
+  result = sym
 
 proc genExpr(node: Node): Sym {.codegen.} =
   ## Generates code for an expression.
@@ -1328,7 +1299,7 @@ proc genObject(node: Node, isInstantiation = false): Sym {.codegen.} =
   if not isInstantiation and node[1].kind != nkEmpty:
     # if so, create a new scope for its generic params and collect them
     gen.pushScope()
-    gen.collectGenericParams(node[1], result)
+    result.genericParams = gen.collectGenericParams(node[1])
 
   # process the object's fields
   result.objectId = gen.script.typeCount
@@ -1401,7 +1372,7 @@ proc genStmt(node: Node) {.codegen.} =
   of nkContinue: gen.genContinue(node) # continue statement
   of nkReturn: gen.genReturn(node) # return statement
   of nkYield: gen.genYield(node) # yield statement
-  of nkProc: gen.genProc(node) # procedure declaration
+  of nkProc: discard gen.genProc(node) # procedure declaration
   of nkIterator: gen.genIterator(node) # iterator declaration
   of nkObject: discard gen.genObject(node) # object declaration
   else: # expression statement
@@ -1439,3 +1410,52 @@ proc genScript*(node: Node) {.codegen.} =
     gen.genStmt(s)
   gen.chunk.emit(opcHalt)
 
+#--
+# system
+#--
+
+proc addProc*(script: Script, module: Module, name: string,
+              params: openarray[(string, string)], returnTy: string,
+              impl: ForeignProc = nil): Proc {.discardable.} =
+  ## Add a foreign procedure to the given module, belonging to the given script.
+  var nodeParams: seq[ProcParam]
+  for param in params:
+    nodeParams.add((newIdent(param[0]), module.sym(param[1])))
+  let (sym, theProc) = script.newProc(newIdent(name), impl = nil,
+                                      nodeParams, module.sym(returnTy),
+                                      pkForeign)
+
+  theProc.foreign = impl
+  module.syms.add(name, sym)
+  if impl != nil:
+    script.procs.add(theProc)
+
+proc initSystemTypes*(module: Module) =
+  ## Add primitive types into the module.
+  ## This should only ever be called when creating the ``system`` module.
+  for kind in tkPrimitives:
+    let name = $kind
+    discard module.add(genType(kind, name))
+
+proc initSystemOps*(script: Script, module: Module) =
+  ## Add builtin operations into the module.
+  ## This should only ever be called when creating the ``system`` module.
+
+  # unary operators
+  script.addProc(module, "not", {"x": "bool"}, "bool")
+  script.addProc(module, "+", {"x": "number"}, "number")
+  script.addProc(module, "-", {"x": "number"}, "number")
+
+  # binary operators
+  script.addProc(module, "+", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "-", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "*", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "/", {"a": "number", "b": "number"}, "number")
+  script.addProc(module, "==", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "!=", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "<", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "<=", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, ">", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, ">=", {"a": "number", "b": "number"}, "bool")
+  script.addProc(module, "==", {"a": "bool", "b": "bool"}, "bool")
+  script.addProc(module, "!=", {"a": "bool", "b": "bool"}, "bool")

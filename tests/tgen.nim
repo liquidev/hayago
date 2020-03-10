@@ -146,3 +146,11 @@ suite "compiler":
 
       var p = Pair[number](a: 1, b: 2)
     """)
+  test "generic procs":
+    compile("""
+      proc print[T](x: T) {
+        echo($x)
+      }
+
+      print[number](2)
+    """)
