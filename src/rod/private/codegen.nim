@@ -27,7 +27,7 @@ const
   ErrUndefinedReference = "'$1' is not declared in the current scope"
   ErrLetReassignment = "'$1' cannot be reassigned"
   ErrTypeMismatch = "Type mismatch: got <$1>, but expected <$2>"
-  ErrTypeMismatchChoice = "Type mismatch: got <$1>, but expected one of:\n$2"
+  ErrTypeMismatchChoice = "Type mismatch: got <$1>, but expected one of:$2"
   ErrNotAProc = "'$1' is not a proc"
   ErrInvalidField = "'$1' is not a valid field"
   ErrNonExistentField = "Field '$1' does not exist"
@@ -57,38 +57,38 @@ const
 #--
 
 type
-  Context = distinct int  ## A scope context.
-  Scope = ref object of RootObj  ## A local scope.
+  Context = distinct int  ## a scope context
+  Scope = ref object of RootObj  ## a local scope
     syms: Table[string, Sym]
-    context: Context  ## The scope's context. This is used for scope hygiene.
-  Module* = ref object of Scope  ## A module representing the global scope of a
-                                 ## single source file.
-    name: string  ## The name of the module.
-  SymKind = enum  ## The kind of a symbol.
+    context: Context      ## the scope's context. this is used for scope hygiene
+  Module* = ref object of Scope  ## a module representing the global scope of a
+                                 ## single source file
+    name: string  ## the name of the module
+  SymKind = enum  ## the kind of a symbol
     skVar = "var"
     skLet = "let"
     skType = "type"
     skProc = "proc"
     skIterator = "iterator"
     skGenericParam = "generic param"
-    skChoice = "(...)"  ## An overloaded symbol, stores many symbols with \
-                        ## the same name.
-  TypeKind = enum  ## The kind of a type.
+    skChoice = "(...)"  ## an overloaded symbol, stores many symbols with \
+                        ## the same name
+  TypeKind = enum  ## the kind of a type
     tkVoid = "void"
     tkBool = "bool"
     tkNumber = "number"
     tkString = "string"
     tkObject = "object"
-  Sym = ref object  ## A symbol.
-    name: Node  ## The name of the symbol.
-    impl: Node  ## The implementation of the symbol. May be ``nil`` if the \
-                ## symbol is generated.
+  Sym = ref object  ## a symbol. this represents an ident that can be looked up
+    name: Node  ## the name of the symbol
+    impl: Node  ## the implementation of the symbol. may be ``nil`` if the \
+                ## symbol is generated
     case kind: SymKind
     of skVar, skLet:
-      varTy: Sym        ## The type of the variable.
-      varSet: bool      ## Is the variable set?
-      varLocal: bool    ## Is the variable local?
-      varStackPos: int  ## The position of a local variable on the stack.
+      varTy: Sym        ## the type of the variable
+      varSet: bool      ## is the variable set?
+      varLocal: bool    ## is the variable local?
+      varStackPos: int  ## the position of this local variable on the stack
     of skType:
       case tyKind: TypeKind
       of tkVoid..tkString: discard
@@ -96,26 +96,29 @@ type
         objectId: TypeId
         objectFields: Table[string, ObjectField]
     of skProc:
-      procId: uint16              ## The unique number of the proc.
-      procParams: seq[ProcParam]  ## The proc's parameters.
-      procReturnTy: Sym           ## The return type of the proc.
+      procId: uint16              ## the unique number of the proc
+      procParams: seq[ProcParam]  ## the proc's parameters
+      procReturnTy: Sym           ## the return type of the proc
     of skIterator:
-      iterParams: seq[ProcParam]  ## The iterator's parameters.
-      iterYieldTy: Sym            ## The yield type of the iterator.
+      iterParams: seq[ProcParam]  ## the iterator's parameters
+      iterYieldTy: Sym            ## the yield type of the iterator
     of skGenericParam:
-      constraint: Sym  ## The generic type constraint.
+      constraint: Sym  ## the generic type constraint
     of skChoice:
-      choices: seq[Sym]  ## The choices.
+      choices: seq[Sym]
     genericParams*: Option[seq[Sym]]    # some if the sym is generic
     genericInstCache*: Table[seq[Sym], Sym]
     genericInstArgs*: Option[seq[Sym]]  # some if the sym is an instantiation
   ObjectField = tuple
-    id: int
-    name: Node
-    ty: Sym
+    id: int     # every object field has an id that's used for lookups on
+                # runtime. this id is simply a seq index so fields lookups are
+                # fast
+    name: Node  # the name of the field
+    ty: Sym     # the type of the field
   ProcParam* = tuple ## A single param of a proc.
     name: Node
     ty: Sym
+    # TODO: default param values
 
 const
   skVars = {skVar, skLet}
@@ -303,7 +306,7 @@ proc newModule*(name: string): Module =
 #--
 
 type
-  ContextAllocator = ref object ## A context allocator. It's shared between \
+  ContextAllocator = ref object ## a context allocator. shared between \
                                 ## codegen instances.
     occupied: seq[Context]
 
@@ -319,24 +322,24 @@ type
     gkToplevel
     gkProc
     gkIterator
-  CodeGen* = object ## A code generator for a module or proc.
-    script: Script ## The script all procs go into.
-    module: Module ## The global scope.
-    chunk: Chunk ## The chunk of code we're generating.
-    scopes: seq[Scope] ## Local scopes.
-    flowBlocks: seq[FlowBlock] ## Flow control blocks.
-    ctxAllocator: ContextAllocator ## The context allocator.
-    context: Context ## The codegen's scope context. This is used to achieve \
-                     ## scope hygiene with iterators.
-    case kind: GenKind ## Does this generator handle a module or a proc?
+  CodeGen* = object             ## a code generator for a module or proc.
+    script: Script              ## the script all procs go into
+    module: Module              ## the global scope
+    chunk: Chunk                ## the chunk of code we're generating
+    scopes: seq[Scope]          ## local scopes
+    flowBlocks: seq[FlowBlock] 
+    ctxAllocator: ContextAllocator
+    context: Context ## the codegen's scope context. this is used to achieve \
+                     ## scope hygiene with iterators
+    case kind: GenKind          ## what this generator generates
     of gkToplevel: discard
     of gkProc:
-      procReturnTy: Sym ## The proc's return type.
+      procReturnTy: Sym         ## the proc's return type
     of gkIterator:
-      iter: Sym ## The symbol representing the iterator.
-      iterForBody: Node ## The for loop's  body.
-      iterForVar: Node ## The for loop variable's name.
-      iterForCtx: Context ## The for loop's context.
+      iter: Sym                 ## the symbol representing the iterator
+      iterForBody: Node         ## the for loop's body
+      iterForVar: Node          ## the for loop variable's name
+      iterForCtx: Context       ## the for loop's context
 
 proc allocCtx*(allocator: ContextAllocator): Context =
   while result in allocator.occupied:

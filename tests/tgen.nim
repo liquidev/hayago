@@ -152,5 +152,5 @@ suite "compiler":
         echo($x)
       }
 
-      print[number](2)
+      print[number](1.0)
     """)
