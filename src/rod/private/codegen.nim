@@ -7,6 +7,7 @@
 import hashes
 import macros
 import options
+import sequtils
 import strutils
 import tables
 
@@ -74,10 +75,16 @@ type
     skChoice = "(...)"  ## an overloaded symbol, stores many symbols with \
                         ## the same name
   TypeKind = enum  ## the kind of a type
-    tkVoid = "void"
+    # meta-types
+    tkVoid = "void"      # matches no types
+    tkAny = "any"        # matches any and all types
+
+    # concrete types
     tkBool = "bool"
-    tkNumber = "number"
-    tkString = "string"
+    tkNumber = "number"  # float64
+    tkString = "string"  # ref string
+
+    # user-defined types
     tkObject = "object"
   Sym = ref object  ## a symbol. this represents an ident that can be looked up
     name: Node  ## the name of the symbol
@@ -94,7 +101,7 @@ type
       of tkVoid..tkString: discard
       of tkObject:
         objectId: TypeId
-        objectFields: Table[string, ObjectField]
+        objectFields: OrderedTable[string, ObjectField]
     of skProc:
       procId: uint16              ## the unique number of the proc
       procParams: seq[ProcParam]  ## the proc's parameters
@@ -108,10 +115,12 @@ type
       choices: seq[Sym]
     genericParams*: Option[seq[Sym]]    # some if the sym is generic
     genericInstCache*: Table[seq[Sym], Sym]
+    genericBase*: Option[Sym]           # contains the base generic type if the
+                                        # sym is an instantiation
     genericInstArgs*: Option[seq[Sym]]  # some if the sym is an instantiation
   ObjectField = tuple
     id: int     # every object field has an id that's used for lookups on
-                # runtime. this id is simply a seq index so fields lookups are
+                # runtime. this id is simply a seq index so field lookups are
                 # fast
     name: Node  # the name of the field
     ty: Sym     # the type of the field
@@ -125,6 +134,7 @@ const
   skCallable = {skProc, skIterator}
   skDecl = {skType} + skCallable + skVars
   tkPrimitives = {tkVoid..tkString}
+  tkMeta = {tkVoid, tkAny}
 
 proc `==`(a, b: Context): bool {.borrow.}
 
@@ -174,11 +184,12 @@ proc `$`(sym: Sym): string =
 
 proc isGeneric*(sym: Sym): bool =
   ## Returns whether the symbol is generic or not.
-  result = sym.genericParams.isSome
+  ## A symbol is generic if it has generic params or *is* a generic param.
+  result = sym.genericParams.isSome or sym.kind == skGenericParam
 
 proc isInstantiation*(sym: Sym): bool =
   ## Returns whether the symbol is an instantiation.
-  result = sym.genericInstArgs.isSome
+  result = sym.genericBase.isSome
 
 proc hash(sym: Sym): Hash =
   ## Hashes a sym (for use in Tables).
@@ -219,6 +230,22 @@ proc genType(kind: TypeKind, name: string): Sym =
   result = Sym(name: newIdent(name), kind: skType,
                tyKind: kind)
 
+proc params(sym: Sym): seq[ProcParam] =
+  ## Get the proc/iterator's params.
+  assert sym.kind in skCallable
+  case sym.kind
+  of skProc: result = sym.procParams
+  of skIterator: result = sym.iterParams
+  else: discard
+
+proc returnTy(sym: Sym): Sym =
+  ## Get the proc/iterator's return or yield type.
+  assert sym.kind in skCallable
+  case sym.kind
+  of skProc: result = sym.procReturnTy
+  of skIterator: result = sym.iterYieldTy
+  else: discard
+
 proc canAdd(choice, sym: Sym): bool =
   ## Tests if ``sym`` can be added into ``choice``. Refer to ``add``
   ## documentation below for details.
@@ -237,10 +264,10 @@ proc canAdd(choice, sym: Sym): bool =
     result = true
     for other in choice.choices:
       if other.kind in skCallable:
-        if sym.procParams.len != other.procParams.len: continue
+        if sym.params.len != other.params.len: continue
         result = false
-        for i, (_, ty) in sym.procParams:
-          if ty != other.procParams[i].ty: return true
+        for i, (_, ty) in sym.params:
+          if ty != other.params[i].ty: return true
   of skGenericParam, skChoice: discard
 
 proc add(scope: Scope, sym: Sym, lookupName: Node = nil): bool =
@@ -281,8 +308,45 @@ proc `$`*(module: Module): string =
   ## Stringifies a module.
   result = "module " & module.name & ":" & $module.Scope
 
+proc sameType(a, b: Sym): bool =
+  ## Returns ``true`` if ``a`` and ``b`` are are compatible types.
+  echo (a, b)
+  assert a.kind == skType and b.kind == skType,
+    "type comparison can't be done on non-type symbols"
+
+  # ``any`` is a special case: it matches literally any type
+  if a.tyKind == tkAny or b.tyKind == tkAny:
+    return true
+
+  # as for other types: if they're not generic, we simply check if the symbols
+  # are equal
+  if not a.isInstantiation and not b.isInstantiation:
+    result = a == b
+  # otherwise, we check the base type, and the generic params for equivalence
+  else:
+    # an generic type referenced somewhere in code cannot possibly pass
+    # ``isGeneric``, because all symbols are instantiated on lookup
+    assert not a.isGeneric and not b.isGeneric,
+      "type somehow is generic even though it was instantiated"
+    # both types have to be instantiations to be equivalent, but this limitation
+    # may be lifted at some point
+    if not a.isInstantiation and b.isInstantiation or
+       a.isInstantiation and not b.isInstantiation:
+      return false
+
+    # likewise, both types have to have the same amount of generic arguments
+    if a.genericInstArgs.get.len != b.genericInstArgs.get.len:
+      return false
+
+    # in the end, we check if the base types are equivalent and the parameters
+    # are equivalent
+    result = a.genericBase.get.sameType(b.genericBase.get)
+    for i, arg in a.genericInstArgs.get:
+      result = result and arg.sameType(b.genericInstArgs.get[i])
+      if result == false: break
+
 proc sym(module: Module, name: string): Sym =
-  ## Lookup the symbol ``name`` from a module.
+  ## Get the symbol ``name`` from a module.
   result = module.syms[name]
 
 proc load*(module: Module, other: Module) =
@@ -514,6 +578,7 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
 proc lookup(gen: var CodeGen, symName: Node): Sym
 
 proc genProc(node: Node, isInstantiation = false): Sym {.codegen.}
+proc genIterator(node: Node, isInstantiation = false): Sym {.codegen.}
 proc genObject(node: Node, isInstantiation = false): Sym {.codegen.}
 
 proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
@@ -521,8 +586,12 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
   ## Instantiate a generic symbol using the given ``params``.
   assert sym.genericParams.isSome, "symbol must be generic"
 
+  # we need to handle some special cases when dealing with generic generic
+  # arguments, more on that below
+  let hasGenericGenericArgs = args.anyIt(it.isGeneric)
+
   # if an instantiation has already been made, return it
-  if args in sym.genericInstCache:
+  if not hasGenericGenericArgs and args in sym.genericInstCache:
     result = sym.genericInstCache[args]
   # otherwise, we need to create the instantiation from scratch
   else:
@@ -538,8 +607,10 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
 
     case sym.kind
     of skType:
-      # instantiations are only special for object types
-      if sym.tyKind == tkObject:
+      # instantiations are only special for object types, iff we don't have any
+      # generic generic args
+      if not hasGenericGenericArgs and sym.tyKind == tkObject:
+        echo "inst object"
         result = gen.genObject(sym.impl, isInstantiation = true)
       # anything else is merely a copy that makes a given type distinct for the
       # given generic arguments
@@ -548,14 +619,28 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
         result[] = sym[]
         result.genericParams = seq[Sym].none
         result.genericInstCache.clear()
-        result.genericInstArgs = some(args)
     of skProc:
       result = gen.genProc(sym.impl, isInstantiation = true)
+    of skIterator:
+      result = gen.genIterator(sym.impl, isInstantiation = true)
     else:
       errorNode.error(ErrNotGeneric % $errorNode)
 
     # after we're done, we can remove the instantiation scope
     gen.popScope()
+
+  # before we finish, however, we need to fill in the generic base and args.
+  # if we had generic params as generic arguments, we replace them with
+  # their type constraints so that types are matched properly when
+  # resolving overloads
+  var args = args
+  for i, arg in args:
+    if arg.kind == skGenericParam:
+      args[i] = arg.constraint
+  result.genericInstArgs = some(args)
+  echo result.genericInstArgs
+
+  result.genericBase = some(sym)
 
 proc lookup(gen: var CodeGen, symName: Node): Sym =
   ## Look up the symbol with the given ``name``.
@@ -652,8 +737,8 @@ proc pushVar(gen: var CodeGen, sym: Sym) =
 proc pushDefault(gen: var CodeGen, ty: Sym) =
   ## Push the default value for the type ``ty`` onto the stack.
   assert ty.kind == skType, "Only types have default values"
+  assert ty.tyKind notin tkMeta, "meta-types do not represent a value"
   case ty.tyKind
-  of tkVoid: assert false, "void is not a value"
   of tkBool:
     gen.chunk.emit(opcPushFalse)
   of tkNumber:
@@ -665,6 +750,7 @@ proc pushDefault(gen: var CodeGen, ty: Sym) =
   of tkObject:
     gen.chunk.emit(opcPushNil)
     gen.chunk.emit(uint16(tyFirstObject + ty.objectId))
+  else: discard  # unreachable
 
 proc genExpr(node: Node): Sym {.codegen.}
 
@@ -688,14 +774,6 @@ proc pushConst(node: Node): Sym {.codegen.} =
     result = gen.module.sym"string"
   else: discard
 
-proc params(sym: Sym): seq[ProcParam] =
-  ## Get the proc/iterator's params.
-  assert sym.kind in skCallable
-  case sym.kind
-  of skProc: result = sym.procParams
-  of skIterator: result = sym.iterParams
-  else: discard
-
 proc findOverload(sym: Sym, params: seq[Sym],
                   errorNode: Node = nil): Sym {.codegen.} =
   ## Finds the correct overload for ``sym``, given the parameter types.
@@ -707,7 +785,7 @@ proc findOverload(sym: Sym, params: seq[Sym],
     if sym.params.len != params.len: result = nil
     else:
       for i, (_, ty) in sym.params:
-        if params[i] != ty:
+        if not params[i].sameType(ty):
           result = nil
           break
   elif sym.kind == skChoice:
@@ -715,8 +793,8 @@ proc findOverload(sym: Sym, params: seq[Sym],
       if choice.kind in skCallable:
         if choice.params.len != params.len: continue
         block checkParams:
-          for i, (_, ty) in choice.procParams:
-            if params[i] != ty: break checkParams
+          for i, (_, ty) in choice.params:
+            if not params[i].sameType(ty): break checkParams
           result = choice
   if errorNode != nil and result == nil:
     var paramList = ""
@@ -733,11 +811,11 @@ proc findOverload(sym: Sym, params: seq[Sym],
         overloadList.add("\n  " & $overload.kind & ' ' & $overload.name & "(")
         for i, (name, ty) in overload.params:
           overloadList.add($name & ": " & $ty.name)
-          if i != overload.procParams.len - 1:
+          if i != overload.params.len - 1:
             overloadList.add(", ")
         overloadList.add(")")
-        if overload.procReturnTy.tyKind != tkVoid:
-          overloadList.add(" -> " & $overload.procReturnTy.name)
+        if overload.returnTy.tyKind != tkVoid:
+          overloadList.add(" -> " & $overload.returnTy.name)
     errorNode.error(ErrTypeMismatchChoice % [paramList, overloadList])
 
 proc splitCall(ast: Node): tuple[callee: Sym, args: seq[Node]] {.codegen.} =
@@ -1095,7 +1173,7 @@ proc collectGenericParams(genericParams: Node): Option[seq[Sym]] {.codegen.} =
   result = some[seq[Sym]](@[])
   for defs in genericParams:
     let constraint =
-      if defs[^2].kind == nkEmpty: nil
+      if defs[^2].kind == nkEmpty: gen.module.sym"any"
       else: gen.lookup(defs[^2])
     for name in defs[0..^3]:
       let sym = newSym(skGenericParam, name, impl = nil)
@@ -1411,32 +1489,47 @@ proc genObject(node: Node, isInstantiation = false): Sym {.codegen.} =
     gen.popScope()
   gen.addSym(result)
 
-proc genIterator(node: Node) {.codegen.} =
+proc genIterator(node: Node, isInstantiation = false): Sym {.codegen.} =
   ## Process an iterator declaration, and add it into the current module or
   ## scope.
 
   # create a new symbol for the iterator
-  var iterSym = newSym(skIterator, name = node[0], impl = node)
-  # get the metadata
+  result = newSym(skIterator, name = node[0], impl = node)
+
+  # collect the generic params from the iterator into a new, temporary scope
+  if not isInstantiation and node[1].kind != nkEmpty:
+    gen.pushScope()
+    result.genericParams = gen.collectGenericParams(node[1])
+
+  # get some metadata about its params
   let
     formalParams = node[2]
     params = gen.collectParams(formalParams)
-  # check if the yield type is present
+
+  # get the yield type
   if formalParams[0].kind == nkEmpty:
     node.error(ErrIterMustHaveYieldType)
   let yieldTy = gen.lookup(formalParams[0])
-  if yieldTy.tyKind == tkVoid:
+  if yieldTy.kind == skType and yieldTy.tyKind == tkVoid:
     node.error(ErrIterMustHaveYieldType)
+
   # fill in the iterator
-  iterSym.iterParams = params
-  iterSym.iterYieldTy = yieldTy
-  gen.addSym(iterSym)
+  result.iterParams = params
+  result.iterYieldTy = yieldTy
+
+  # remove the generic param scope
+  if not isInstantiation and result.isGeneric:
+    gen.popScope()
+
+  # add the resulting iterator to the current scope
+  gen.addSym(result)
 
 proc genStmt(node: Node) {.codegen.} =
   ## Generate code for a statement.
 
   case node.kind
   of nkLet, nkVar:                              # variable declarations
+    # TODO: move this to another procedure
     for decl in node:
       if decl[^1].kind == nkEmpty:
         # TODO: if the type was specified, set the value to the default value of
@@ -1467,7 +1560,7 @@ proc genStmt(node: Node) {.codegen.} =
   of nkReturn: gen.genReturn(node)              # return statement
   of nkYield: gen.genYield(node)                # yield statement
   of nkProc: discard gen.genProc(node)          # procedure declaration
-  of nkIterator: gen.genIterator(node)          # iterator declaration
+  of nkIterator: discard gen.genIterator(node)  # iterator declaration
   of nkObject: discard gen.genObject(node)      # object declaration
   else:                                         # expression statement
     let ty = gen.genExpr(node)

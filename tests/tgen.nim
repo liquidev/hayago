@@ -154,3 +154,21 @@ suite "compiler":
 
       print[number](1.0)
     """)
+  test "generic iterators":
+    compile("""
+      object Tri[T] {
+        a, b, c: T
+      }
+
+      var t = Tri[number](a: 1, b: 2, c: 3)
+
+      iterator vertices[T](tri: Tri[T]) -> T {
+        yield tri.a
+        yield tri.b
+        yield tri.c
+      }
+
+      for vert in vertices[number](t) {
+        echo($vert)
+      }
+    """)
