@@ -310,7 +310,6 @@ proc `$`*(module: Module): string =
 
 proc sameType(a, b: Sym): bool =
   ## Returns ``true`` if ``a`` and ``b`` are are compatible types.
-  echo (a, b)
   assert a.kind == skType and b.kind == skType,
     "type comparison can't be done on non-type symbols"
 
@@ -610,7 +609,6 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
       # instantiations are only special for object types, iff we don't have any
       # generic generic args
       if not hasGenericGenericArgs and sym.tyKind == tkObject:
-        echo "inst object"
         result = gen.genObject(sym.impl, isInstantiation = true)
       # anything else is merely a copy that makes a given type distinct for the
       # given generic arguments
@@ -638,7 +636,6 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
     if arg.kind == skGenericParam:
       args[i] = arg.constraint
   result.genericInstArgs = some(args)
-  echo result.genericInstArgs
 
   result.genericBase = some(sym)
 
