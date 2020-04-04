@@ -133,16 +133,40 @@ const
   skVars = {skVar, skLet}
   skCallable = {skProc, skIterator}
   skDecl = {skType} + skCallable + skVars
+  skTyped = {skType, skGenericParam}
   tkPrimitives = {tkVoid..tkString}
   tkMeta = {tkVoid, tkAny}
 
 proc `==`(a, b: Context): bool {.borrow.}
 
+proc clone(sym: Sym): Sym =
+  ## Clones a symbol, returning a newly allocated instance with the same fields.
+  new(result)
+  result[] = sym[]
+
+proc params(sym: Sym): seq[ProcParam] =
+  ## Get the proc/iterator's params.
+  assert sym.kind in skCallable
+  case sym.kind
+  of skProc: result = sym.procParams
+  of skIterator: result = sym.iterParams
+  else: discard
+
+proc returnTy(sym: Sym): Sym =
+  ## Get the proc/iterator's return or yield type.
+  assert sym.kind in skCallable
+  case sym.kind
+  of skProc: result = sym.procReturnTy
+  of skIterator: result = sym.iterYieldTy
+  else: discard
+
+proc `$`*(sym: Sym): string
+
 proc `$`(params: seq[ProcParam]): string =
   ## Stringify a seq of proc parameters.
   result = "("
   for i, param in params:
-    result.add($param.name & ": " & $param.ty.name)
+    result.add($param.name & ": " & $param.ty)
     if i != params.len - 1:
       result.add(", ")
   result.add(")")
@@ -150,14 +174,36 @@ proc `$`(params: seq[ProcParam]): string =
 proc `$`*(sym: Sym): string =
   ## Stringify a symbol in a user-friendly way.
   case sym.kind
-  of skVar, skLet, skType:
-    result = $sym.impl
+  of skVar, skLet:
+    # we don't have a runtime value for the variable, so we just show the name
+    # and the type
+    result =
+      if sym.kind == skVar: "var "
+      else: "let "
+    result.add(sym.name.render)
+    result.add(": ")
+    result.add($sym.varTy)
+  of skType:
+    result = sym.name.render
+    if sym.genericInstArgs.isSome:
+      result.add('[' & sym.genericInstArgs.get.join(", ") & ']')
   of skGenericParam:
-    result = $sym.name
+    result = sym.name.render
     if sym.constraint != nil:
       result.add(": " & $sym.constraint)
   of skCallable:
-    discard
+    result =
+      if sym.kind == skProc: "proc "
+      else: "iterator "
+    result.add(sym.name.render)
+    if sym.genericParams.isSome or sym.genericInstArgs.isSome:
+      let genericParams =
+        sym.genericParams.get(otherwise = sym.genericInstArgs.get)
+      result.add('[' & genericParams.join(", ") & ']')
+    result.add($sym.params)
+    if sym.returnTy.tyKind != tkVoid:
+      result.add(" -> ")
+      result.add($sym.returnTy)
   of skChoice:
     result = sym.choices.join("\n").indent(2)
 
@@ -244,26 +290,18 @@ proc genType(kind: TypeKind, name: string): Sym =
   result = Sym(name: newIdent(name), kind: skType,
                tyKind: kind)
 
-proc params(sym: Sym): seq[ProcParam] =
-  ## Get the proc/iterator's params.
-  assert sym.kind in skCallable
-  case sym.kind
-  of skProc: result = sym.procParams
-  of skIterator: result = sym.iterParams
-  else: discard
-
-proc returnTy(sym: Sym): Sym =
-  ## Get the proc/iterator's return or yield type.
-  assert sym.kind in skCallable
-  case sym.kind
-  of skProc: result = sym.procReturnTy
-  of skIterator: result = sym.iterYieldTy
-  else: discard
-
 proc sameType(a, b: Sym): bool =
   ## Returns ``true`` if ``a`` and ``b`` are are compatible types.
-  assert a.kind == skType and b.kind == skType,
+  assert a.kind in skTyped and b.kind in skTyped,
     "type comparison can't be done on non-type symbols"
+
+  # make 'em mutable for the next segment
+  var (a, b) = (a, b)
+
+  # handle generic params as a special case, because they're a different kind of
+  # a symbol
+  if a.kind == skGenericParam: a = a.constraint
+  if b.kind == skGenericParam: b = b.constraint
 
   # ``any`` is a special case: it matches literally any type
   if a.tyKind == tkAny or b.tyKind == tkAny:
@@ -632,9 +670,7 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
       # anything else is merely a copy that makes a given type distinct for the
       # given generic arguments
       else:
-        new(result)
-        result[] = sym[]
-        result.genericParams = seq[Sym].none
+        result = sym.clone()
         result.genericInstCache.clear()
     of skProc:
       result = gen.genProc(sym.impl, isInstantiation = true)
@@ -646,16 +682,7 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
     # after we're done, we can remove the instantiation scope
     gen.popScope()
 
-  # before we finish, however, we need to fill in the generic base and args.
-  # if we had generic params as generic arguments, we replace them with
-  # their type constraints so that types are matched properly when
-  # resolving overloads
-  var args = args
-  for i, arg in args:
-    if arg.kind == skGenericParam:
-      args[i] = arg.constraint
   result.genericInstArgs = some(args)
-
   result.genericBase = some(sym)
 
 proc lookup(gen: var CodeGen, symName: Node): Sym =
@@ -812,25 +839,17 @@ proc findOverload(sym: Sym, params: seq[Sym],
   # if we failed to find an appropriate overload, we give a nice error message
   # to the user
   if errorNode != nil and result == nil:
-    var paramList = ""
-    for i, param in params:
-      paramList.add($param.name)
-      if i != params.len - 1:
-        paramList.add(", ")
+    # <T, U, ...>
+    var paramList = params.join(", ")
+    # possible overloads
     var overloadList = ""
     let overloads =
       if sym.kind == skChoice: sym.choices
       else: @[sym]
     for overload in overloads:
       if overload.kind in skCallable:
-        overloadList.add("\n  " & $overload.kind & ' ' & $overload.name & "(")
-        for i, (name, ty) in overload.params:
-          overloadList.add($name & ": " & $ty.name)
-          if i != overload.params.len - 1:
-            overloadList.add(", ")
-        overloadList.add(")")
-        if overload.returnTy.tyKind != tkVoid:
-          overloadList.add(" -> " & $overload.returnTy.name)
+        overloadList.add("\n  " & $overload)
+    # the error
     errorNode.error(ErrTypeMismatchChoice % [paramList, overloadList])
 
 proc splitCall(ast: Node): tuple[callee: Sym, args: seq[Node]] {.codegen.} =
@@ -1191,7 +1210,7 @@ proc collectGenericParams(genericParams: Node): Option[seq[Sym]] {.codegen.} =
       if defs[^2].kind == nkEmpty: gen.module.sym"any"
       else: gen.lookup(defs[^2])
     for name in defs[0..^3]:
-      let sym = newSym(skGenericParam, name, impl = nil)
+      let sym = newSym(skGenericParam, name, impl = name)
       sym.constraint = constraint
       gen.addSym(sym)
       result.get.add(sym)
@@ -1520,6 +1539,7 @@ proc genIterator(node: Node, isInstantiation = false): Sym {.codegen.} =
   let
     formalParams = node[2]
     params = gen.collectParams(formalParams)
+  echo params
 
   # get the yield type
   if formalParams[0].kind == nkEmpty:

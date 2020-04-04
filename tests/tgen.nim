@@ -14,18 +14,7 @@ template benchmark(name, body) =
   body
   echo name, " took ", (epochTime() - t0) * 1000, "ms"
 
-template dumpTokens(input: string) =
-  var
-    scanner = initScanner(input, "dump.rod")
-    token: Token
-  while true:
-    token = scanner.next()
-    echo token
-    if token.kind == tokEnd:
-      break
-
 template compile(input: string) =
-  dumpTokens(input)
   benchmark("compilation"):
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
@@ -37,7 +26,6 @@ template compile(input: string) =
       cp = initCodeGen(script, module, main)
     module.load(system)
     cp.genScript(ast)
-  echo ast.treeRepr
   echo module
   echo `$`(script, {
     "system.rod": RodlibSystemSrc,
@@ -168,7 +156,7 @@ suite "compiler":
         yield tri.c
       }
 
-      for vert in vertices[number](t) {
+      for vert in vertices[string](t) {
         echo($vert)
       }
     """)
