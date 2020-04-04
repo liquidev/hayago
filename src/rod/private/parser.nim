@@ -120,7 +120,7 @@ proc `$`*(node: Node): string =
   of nkEmpty: result = ""
   of nkBool: result = $node.boolVal
   of nkNumber: result = $node.numberVal
-  of nkString: result = node.stringVal
+  of nkString: result = node.stringVal.escape
   of nkIdent: result = node.ident
   else: discard
 
@@ -138,6 +138,79 @@ proc treeRepr*(node: Node): string =
     for i, child in node.children:
       children.add('\n' & child.treeRepr)
     result.add(children.indent(2))
+
+proc render*(node: Node): string =
+  ## Renders the node's AST representation into a string. Note that this is
+  ## imperfect and can't fully reproduce the actual user input (this, for
+  ## instance, omits parentheses, as they are ignored by the parser).
+
+  proc join(nodes: seq[Node], delimiter: string): string =
+    for i, node in nodes:
+      result.add(node.render)
+      if i != nodes.len - 1:
+        result.add(delimiter)
+
+  case node.kind
+  of nkEmpty: result = ""
+  of nkScript: result = node.children.join("\n")
+  of nkBlock:
+    result =
+      if node.len == 0: "{}"
+      else: "{\n" & node.children.join("\n").indent(2) & "\n}"
+  of nkIdentDefs:
+    result = node[0..^3].join(", ")
+    if node[^2].kind != nkEmpty: result.add(": " & node[^2].render)
+    if node[^1].kind != nkEmpty: result.add(" = " & node[^1].render)
+  of nkFormalParams:
+    result = '(' & node[1..^1].join(", ") & ')'
+    if node[0].kind != nkEmpty: result.add(" -> " & node[0].render)
+  of nkGenericParams: result = '[' & node.children.join(", ") & ']'
+  of nkRecFields: result = node.children.join("\n")
+  of nkBool, nkNumber, nkString, nkIdent: result = $node
+  of nkPrefix: result = node[0].render & node[1].render
+  of nkInfix:
+    result = node[1].render & ' ' & node[0].render & ' ' & node[2].render
+  of nkDot: result = node[0].render & '.' & node[1].render
+  of nkColon: result = node[0].render & ": " & node[1].render
+  of nkIndex: result = node[0].render & '[' & node[1].render & ']'
+  of nkCall: result = node[0].render & '(' & node[1..^1].join(", ") & ')'
+  of nkIf:
+    result = "if " & node[0].render & ' ' & node[1].render
+    let
+      hasElse = node.children.len mod 2 == 1
+      elifBranches =
+        if hasElse: node[2..^2]
+        else: node[2..^1]
+    for i in countup(0, elifBranches.len - 1, 2):
+      result.add(" elif " & elifBranches[i].render & ' ' &
+                 elifBranches[i + 1].render)
+    if hasElse:
+      result.add(" else " & node[^1].render)
+  of nkProcTy:
+    result = "proc " & node[0].render
+  of nkVar, nkLet:
+    result =
+      (if node.kind == nkVar: "var " else: "let ") & node[0].render
+  of nkWhile: result = "while " & node[0].render & ' ' & node[1].render
+  of nkFor:
+    result = "for " & node[0].render & " in " & node[1].render &
+             ' ' & node[2].render
+  of nkBreak: result = "break"
+  of nkContinue: result = "continue"
+  of nkReturn, nkYield:
+    result =
+      if node.kind == nkReturn: "return"
+      else: "yield"
+    if node[0].kind != nkEmpty: result.add(' ' & node[0].render)
+  of nkObject:
+    result = "object " & node[0].render & node[1].render & " {\n" &
+             node[2].render.indent(2) & "\n}\n"
+  of nkProc, nkIterator:
+    result = (if node.kind == nkProc: "proc " else: "iterator ") &
+             node[0].render & node[1].render & node[2].render & ' ' &
+             node[3].render
+    if node[0].kind != nkEmpty:
+      result.add('\n')
 
 proc newNode*(kind: NodeKind): Node =
   ## Construct a new node.

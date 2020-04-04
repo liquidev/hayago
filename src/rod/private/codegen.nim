@@ -147,8 +147,22 @@ proc `$`(params: seq[ProcParam]): string =
       result.add(", ")
   result.add(")")
 
-proc `$`(sym: Sym): string =
-  ## Stringify a symbol.
+proc `$`*(sym: Sym): string =
+  ## Stringify a symbol in a user-friendly way.
+  case sym.kind
+  of skVar, skLet, skType:
+    result = $sym.impl
+  of skGenericParam:
+    result = $sym.name
+    if sym.constraint != nil:
+      result.add(": " & $sym.constraint)
+  of skCallable:
+    discard
+  of skChoice:
+    result = sym.choices.join("\n").indent(2)
+
+proc `$$`(sym: Sym): string =
+  ## Stringify a symbol verbosely for debugging purposes.
   case sym.kind
   of skVar:
     result = "var of type " & sym.varTy.name.ident
@@ -246,68 +260,6 @@ proc returnTy(sym: Sym): Sym =
   of skIterator: result = sym.iterYieldTy
   else: discard
 
-proc canAdd(choice, sym: Sym): bool =
-  ## Tests if ``sym`` can be added into ``choice``. Refer to ``add``
-  ## documentation below for details.
-  assert choice.kind == skChoice
-  if sym.kind notin skDecl: return false
-  case sym.kind
-  of skVars:
-    for other in choice.choices:
-      if other.kind in skVars: return false
-    result = true
-  of skType:
-    for other in choice.choices:
-      if other.kind == skType: return false
-    result = true
-  of skCallable:
-    result = true
-    for other in choice.choices:
-      if other.kind in skCallable:
-        if sym.params.len != other.params.len: continue
-        result = false
-        for i, (_, ty) in sym.params:
-          if ty != other.params[i].ty: return true
-  of skGenericParam, skChoice: discard
-
-proc add(scope: Scope, sym: Sym, lookupName: Node = nil): bool =
-  ## Add a symbol to the given scope. If a symbol under the given name already
-  ## exists, it's added into an skChoice. The rules for overloading are:
-  ## - there may only be one skVar or skLet under a given skChoice,
-  ## - there may only be one skType under a given skChoice,
-  ## - there may be any number of skProcs with unique parameters under a
-  ##   single skChoice.
-  ## If any one of these checks fails, the proc will return ``false``.
-  let name =
-    if lookupName == nil: sym.name.ident
-    else: lookupName.ident
-  if name notin scope.syms:
-    scope.syms[name] = sym
-    result = true
-  else:
-    let other = scope.syms[name]
-    if other.kind != skChoice:
-      var choice = newSym(skChoice, other.name)
-      choice.choices.add(other)
-      scope.syms[name] = choice
-    if scope.syms[name].canAdd(sym):
-      scope.syms[name].choices.add(sym)
-      result = true
-    else:
-      result = false
-
-proc `$`*(scope: Scope): string =
-  ## Stringifies a scope.
-  for name, sym in scope.syms:
-    result.add("\n  ")
-    result.add(name)
-    result.add(": ")
-    result.add($sym)
-
-proc `$`*(module: Module): string =
-  ## Stringifies a module.
-  result = "module " & module.name & ":" & $module.Scope
-
 proc sameType(a, b: Sym): bool =
   ## Returns ``true`` if ``a`` and ``b`` are are compatible types.
   assert a.kind == skType and b.kind == skType,
@@ -343,6 +295,73 @@ proc sameType(a, b: Sym): bool =
     for i, arg in a.genericInstArgs.get:
       result = result and arg.sameType(b.genericInstArgs.get[i])
       if result == false: break
+
+proc sameParams(sym: Sym, params: seq[Sym]): bool =
+  ## Returns ``true`` if both ``a`` and ``b`` are called with the same
+  ## parameters.
+  assert sym.kind in skCallable, "symbol must be callable"
+  result = sym.params.len == params.len
+  if result == false: return
+  for i, param in sym.params:
+    if not param.ty.sameType(params[i]):
+      return false
+
+proc sameParams(a, b: Sym): bool =
+  ## Overload of ``sameParams`` for two symbols.
+  assert b.kind in skCallable, "symbol must be callable"
+  result = a.sameParams(b.params.mapIt(it.ty))
+
+proc canAdd(choice, sym: Sym): bool =
+  ## Tests if ``sym`` can be added into ``choice``. Refer to ``add``
+  ## documentation below for details.
+  assert choice.kind == skChoice
+  if sym.kind notin skDecl: return false
+  case sym.kind
+  of skVars:
+    result = choice.choices.allIt(it.kind notin skVars)
+  of skType:
+    result = choice.choices.allIt(it.kind != skType)
+  of skCallable:
+    result = choice.choices.allIt(not sym.sameParams(it))
+  of skGenericParam, skChoice: discard
+
+proc add(scope: Scope, sym: Sym, lookupName: Node = nil): bool =
+  ## Add a symbol to the given scope. If a symbol under the given name already
+  ## exists, it's added into an skChoice. The rules for overloading are:
+  ## - there may only be one skVar or skLet under a given skChoice,
+  ## - there may only be one skType under a given skChoice,
+  ## - there may be any number of skProcs with unique parameters under a
+  ##   single skChoice.
+  ## If any one of these checks fails, the proc will return ``false``.
+  let name =
+    if lookupName == nil: sym.name.ident
+    else: lookupName.ident
+  if name notin scope.syms:
+    scope.syms[name] = sym
+    result = true
+  else:
+    let other = scope.syms[name]
+    if other.kind != skChoice:
+      var choice = newSym(skChoice, other.name)
+      choice.choices.add(other)
+      scope.syms[name] = choice
+    if scope.syms[name].canAdd(sym):
+      scope.syms[name].choices.add(sym)
+      result = true
+    else:
+      result = false
+
+proc `$`*(scope: Scope): string =
+  ## Stringifies a scope.
+  for name, sym in scope.syms:
+    result.add("\n  ")
+    result.add(name)
+    result.add(": ")
+    result.add($$sym)
+
+proc `$`*(module: Module): string =
+  ## Stringifies a module.
+  result = "module " & module.name & ":" & $module.Scope
 
 proc sym(module: Module, name: string): Sym =
   ## Get the symbol ``name`` from a module.
@@ -775,24 +794,23 @@ proc findOverload(sym: Sym, params: seq[Sym],
                   errorNode: Node = nil): Sym {.codegen.} =
   ## Finds the correct overload for ``sym``, given the parameter types.
 
-  # TODO: DRY
-
+  # if we don't have multiple choices, we just check if the param lists are
+  # compatible
   if sym.kind in skCallable:
-    result = sym
-    if sym.params.len != params.len: result = nil
-    else:
-      for i, (_, ty) in sym.params:
-        if not params[i].sameType(ty):
-          result = nil
-          break
+    result =
+      if sym.sameParams(params): sym
+      else: nil
+  # otherwise, we find a matching overload by iterating through the list of
+  # choices. this isn't the most efficient solution and can be optimized to use
+  # a table for O(1) lookups, but time will tell if that's necessary.
   elif sym.kind == skChoice:
     for choice in sym.choices:
-      if choice.kind in skCallable:
-        if choice.params.len != params.len: continue
-        block checkParams:
-          for i, (_, ty) in choice.params:
-            if not params[i].sameType(ty): break checkParams
-          result = choice
+      if choice.kind in skCallable and choice.sameParams(params):
+        result = choice
+        break
+
+  # if we failed to find an appropriate overload, we give a nice error message
+  # to the user
   if errorNode != nil and result == nil:
     var paramList = ""
     for i, param in params:

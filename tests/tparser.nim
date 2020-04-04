@@ -5,7 +5,7 @@ import rod/private/parser
 
 template parse(input: string) =
   var scanner = initScanner(input, "testcase.rod")
-  echo parseScript(scanner).treeRepr
+  echo parseScript(scanner).render
 
 suite "parser":
   test "expressions":
