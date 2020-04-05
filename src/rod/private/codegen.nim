@@ -26,10 +26,10 @@ const
   ErrLocalRedeclaration = "'$1' is already declared in this scope"
   ErrGlobalRedeclaration = "'$1' is already declared"
   ErrUndefinedReference = "'$1' is not declared in the current scope"
-  ErrLetReassignment = "'$1' cannot be reassigned"
+  ErrLetReassignment = "'$1' cannot be reassigned because it's a 'let' variable"
   ErrTypeMismatch = "type mismatch: got <$1>, but expected <$2>"
   ErrTypeMismatchChoice = "type mismatch: got <$1>, but expected one of:$2"
-  ErrNotAProc = "'$1' is not a proc"
+  ErrNotAProc = "'$1' is not a procedure"
   ErrInvalidField = "'$1' is not a valid field"
   ErrNonExistentField = "field '$1' does not exist"
   ErrInvalidAssignment = "cannot assign to '$1'"
@@ -38,7 +38,7 @@ const
   ErrFieldInitMustBeAColonExpr =
     "field initializer must be a colon expression: 'a: b'"
   ErrNoSuchField = "<$1> does not have the field '$2'"
-  ErrValueIsVoid = "value does not have a valid type"
+  ErrValueIsVoid = "value does not have a valid type (its type is <void>)"
   ErrOnlyUsableInABlock =
     "'$1' can only be used inside a loop or a block statement"
   ErrOnlyUsableInALoop = "'$1' can only be used inside a loop"
@@ -49,7 +49,7 @@ const
   ErrSymKindMismatch = "$1 expected, but got $2"
   ErrInvalidSymName = "'$1' is not a valid symbol name"
   ErrCouldNotInferGeneric =
-    "could not infer generic params for '$1'. Specify them explicitly"
+    "could not infer generic params for '$1'. specify them explicitly"
   ErrNotGeneric = "'$1' is not generic"
   ErrGenericArgLenMismatch = "got $1 generic arguments, but expected $2"
 
@@ -59,12 +59,14 @@ const
 
 type
   Context = distinct int  ## a scope context
+
   Scope = ref object of RootObj  ## a local scope
     syms: Table[string, Sym]
     context: Context      ## the scope's context. this is used for scope hygiene
   Module* = ref object of Scope  ## a module representing the global scope of a
                                  ## single source file
     name: string  ## the name of the module
+
   SymKind = enum  ## the kind of a symbol
     skVar = "var"
     skLet = "let"
@@ -74,6 +76,7 @@ type
     skGenericParam = "generic param"
     skChoice = "(...)"  ## an overloaded symbol, stores many symbols with \
                         ## the same name
+
   TypeKind = enum  ## the kind of a type
     # meta-types
     tkVoid = "void"      # matches no types
@@ -86,6 +89,7 @@ type
 
     # user-defined types
     tkObject = "object"
+
   Sym = ref object  ## a symbol. this represents an ident that can be looked up
     name: Node  ## the name of the symbol
     impl: Node  ## the implementation of the symbol. may be ``nil`` if the \
@@ -118,12 +122,14 @@ type
     genericBase*: Option[Sym]           # contains the base generic type if the
                                         # sym is an instantiation
     genericInstArgs*: Option[seq[Sym]]  # some if the sym is an instantiation
+
   ObjectField = tuple
     id: int     # every object field has an id that's used for lookups on
                 # runtime. this id is simply a seq index so field lookups are
                 # fast
     name: Node  # the name of the field
     ty: Sym     # the type of the field
+
   ProcParam* = tuple ## A single param of a proc.
     name: Node
     ty: Sym
@@ -134,6 +140,7 @@ const
   skCallable = {skProc, skIterator}
   skDecl = {skType} + skCallable + skVars
   skTyped = {skType, skGenericParam}
+
   tkPrimitives = {tkVoid..tkString}
   tkMeta = {tkVoid, tkAny}
 
@@ -245,7 +252,8 @@ proc `$$`(sym: Sym): string =
 proc isGeneric*(sym: Sym): bool =
   ## Returns whether the symbol is generic or not.
   ## A symbol is generic if it has generic params or *is* a generic param.
-  result = sym.genericParams.isSome or sym.kind == skGenericParam
+  (sym.genericParams.isSome or sym.kind == skGenericParam) and
+  sym.genericBase.isNone
 
 proc isInstantiation*(sym: Sym): bool =
   ## Returns whether the symbol is an instantiation.
@@ -253,29 +261,14 @@ proc isInstantiation*(sym: Sym): bool =
 
 proc hash(sym: Sym): Hash =
   ## Hashes a sym (for use in Tables).
-  var h = Hash(0)
-  h = h !& hash(sym.name)
-  case sym.kind
-  of skVar, skLet:
-    h = h !& hash(sym.varTy) !& hash(sym.varLocal) !& hash(sym.varStackPos)
-  of skType:
-    h = h !& hash(sym.tyKind)
-    if sym.tyKind == tkObject:
-      h = h !& hash(sym.objectId)
-  of skProc:
-    h = h !& hash(sym.procId)
-  of skIterator:
-    h = h !& hash(sym.iterParams)
-    h = h !& hash(sym.iterYieldTy)
-  of skGenericParam:
-    h = h !& hash(sym.constraint)
-  of skChoice:
-    h = h !& hash(sym.choices)
-  if sym.isGeneric:
-    h = h !& hash(sym.genericParams.get)
-  if sym.isInstantiation:
-    h = h !& hash(sym.genericInstArgs.get)
-  result = h
+
+  # we don't do any special hashing, just hash it by instance to make sure that
+  # even if there are two symbols named the same, they'll stay different when
+  # used in table lookups
+
+  # side note: this efficient hashing of integers that Nim claims to provide
+  # is just converting the int to a Hash (which is a distinct int) :)
+  result = hash(cast[int](sym))
 
 proc newSym(kind: SymKind, name: Node, impl: Node = nil): Sym =
   ## Create a new symbol from a Node.
@@ -311,12 +304,14 @@ proc sameType(a, b: Sym): bool =
   # are equal
   if not a.isInstantiation and not b.isInstantiation:
     result = a == b
+
   # otherwise, we check the base type, and the generic params for equivalence
   else:
     # an generic type referenced somewhere in code cannot possibly pass
     # ``isGeneric``, because all symbols are instantiated on lookup
     assert not a.isGeneric and not b.isGeneric,
       "type somehow is generic even though it was instantiated"
+
     # both types have to be instantiations to be equivalent, but this limitation
     # may be lifted at some point
     if not a.isInstantiation and b.isInstantiation or
@@ -371,18 +366,29 @@ proc add(scope: Scope, sym: Sym, lookupName: Node = nil): bool =
   ## - there may be any number of skProcs with unique parameters under a
   ##   single skChoice.
   ## If any one of these checks fails, the proc will return ``false``.
+  ## These checks will probably made more strict in the future.
+
+  # this proc can override the name of the ident. this is used for generic
+  # instantiations to make type aliases under the names of the generic
+  # parameters
   let name =
     if lookupName == nil: sym.name.ident
     else: lookupName.ident
+
+  # if the symbol hasn't been overloaded, just add it to the symbol table
   if name notin scope.syms:
     scope.syms[name] = sym
     result = true
+
+  # otherwise, add it to a shared 'choice' symbol if an overload with the same
+  # name doesn't already exist
   else:
     let other = scope.syms[name]
     if other.kind != skChoice:
       var choice = newSym(skChoice, other.name)
       choice.choices.add(other)
       scope.syms[name] = choice
+
     if scope.syms[name].canAdd(sym):
       scope.syms[name].choices.add(sym)
       result = true
@@ -391,6 +397,7 @@ proc add(scope: Scope, sym: Sym, lookupName: Node = nil): bool =
 
 proc `$`*(scope: Scope): string =
   ## Stringifies a scope.
+  ## This is only really useful for debugging.
   for name, sym in scope.syms:
     result.add("\n  ")
     result.add(name)
@@ -399,6 +406,7 @@ proc `$`*(scope: Scope): string =
 
 proc `$`*(module: Module): string =
   ## Stringifies a module.
+  ## This is only really useful for debugging.
   result = "module " & module.name & ":" & $module.Scope
 
 proc sym(module: Module, name: string): Sym =
@@ -667,7 +675,7 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
       # generic generic args
       if not hasGenericGenericArgs and sym.tyKind == tkObject:
         result = gen.genObject(sym.impl, isInstantiation = true)
-      # anything else is merely a copy that makes a given type distinct for the
+      # anything else creates a copy that makes a given type distinct for the
       # given generic arguments
       else:
         result = sym.clone()
@@ -684,6 +692,56 @@ proc instantiate(gen: var CodeGen, sym: Sym, args: seq[Sym],
 
   result.genericInstArgs = some(args)
   result.genericBase = some(sym)
+
+proc inferGenericArgs(gen: var CodeGen, sym: Sym,
+                      argTypes: seq[Sym], callNode: Node): seq[Option[Sym]] =
+  ## Use a simple recursive algorithm to infer the generic arguments for an
+  ## expression. ``sym`` is the generic symbol, and ``argTypes`` are the types
+  ## of arguments in a procedure or iterator call. The resulting sequence are
+  ## the inferred generic argument types. If a type could not be inferred,
+  ## it will be ``None``.
+  assert sym.isGeneric, "symbol must be generic for type inference"
+
+  proc walkType(types: var Table[Sym, Sym], procTy, callTy: Sym) {.nimcall.} =
+    # this procedure walks through the given type and fills in the ``types``
+    # table with the appropriate types.
+
+    # generic parameters are our main point of interest:
+    # we take the call type and bind it to the type in the proc signature.
+    # if the type is already bound, we compare the two and see if there's a type
+    # mismatch.
+    if procTy.kind == skGenericParam:
+      if procTy notin types:
+        types[procTy] = callTy
+      else:
+        if types[procTy] != callTy:
+          callNode.error(ErrTypeMismatch % [$callTy, $types[procTy]])
+
+    # as for generic types: we take all their arguments and recursively walk
+    # through them. we know that ``callTy`` is compatible with this, because
+    # overload resolution is done before generic param inference.
+    elif procTy.genericInstArgs.isSome:
+      for i, procArg in procTy.genericInstArgs.get:
+        let callArg = callTy.genericInstArgs.get[i]
+        walkType(types, procArg, callArg)
+
+    # we don't care about any other types, as they're not related to generic
+    # types inference.
+
+  # to infer the generic parameters, we're going to call walkType with the
+  # 'root' type pairs. those are the types in the proc's signature and the types
+  # passed in through ``argTypes``.
+  var types: Table[Sym, Sym]
+  for i, procParam in sym.params:
+    let
+      procTy = procParam.ty
+      callTy = argTypes[i]
+    walkType(types, procTy, callTy)
+
+  # after we walk the types, we'll collect them into our resulting seq.
+  for genericParam in sym.genericParams.get:
+    result.add(if genericParam in types: some(types[genericParam])
+               else: Sym.none)
 
 proc lookup(gen: var CodeGen, symName: Node): Sym =
   ## Look up the symbol with the given ``name``.
@@ -710,15 +768,15 @@ proc lookup(gen: var CodeGen, symName: Node): Sym =
   if result == nil:
     name.error(ErrUndefinedReference % $name)
 
-  # if the symbol is generic, try to instantiate it.
-  if result.genericParams.isSome:
-    var genericParams: seq[Sym]
-    if symName.kind == nkIndex:
-      for param in symName[1..^1]:
-        genericParams.add(gen.lookup(param))
+  if symName.kind == nkIndex:
+    if result.isGeneric:
+      var genericParams: seq[Sym]
+      if symName.kind == nkIndex:
+        for param in symName[1..^1]:
+          genericParams.add(gen.lookup(param))
+      result = gen.instantiate(result, genericParams, errorNode = name)
     else:
-      symName.error(ErrCouldNotInferGeneric % $symName)
-    result = gen.instantiate(result, genericParams, errorNode = name)
+      name.error(ErrNotGeneric % $name)
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -880,9 +938,19 @@ proc callProc(procSym: Sym, argTypes: seq[Sym],
 
   if procSym.kind in {skProc, skChoice}:
     # find the overload
-    let theProc = gen.findOverload(procSym, argTypes, errorNode)
+    var theProc = gen.findOverload(procSym, argTypes, errorNode)
     if theProc.kind != skProc:
       errorNode.error(ErrSymKindMismatch % [$skProc, $theProc.kind])
+    if theProc.isGeneric:
+      let genericArgs = gen.inferGenericArgs(theProc, argTypes, errorNode)
+        .mapIt do:
+          if it.isSome: it.get
+          else:
+            errorNode.error(ErrCouldNotInferGeneric % errorNode.render)
+            nil
+      echo genericArgs
+      theProc = gen.instantiate(theProc, genericArgs, errorNode)
+
     # call the proc
     gen.chunk.emit(opcCallD)
     gen.chunk.emit(theProc.procId)

@@ -136,11 +136,13 @@ suite "compiler":
     """)
   test "generic procs":
     compile("""
-      proc print[T](x: T) {
+      proc print[T](x, y, z: T) {
         echo($x)
+        echo($y)
+        echo($z)
       }
 
-      print[number](1.0)
+      print(1, 2, 3)
     """)
   test "generic iterators":
     compile("""
