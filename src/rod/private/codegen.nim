@@ -51,7 +51,7 @@ const
   ErrCouldNotInferGeneric =
     "could not infer generic params for '$1'. Specify them explicitly"
   ErrNotGeneric = "'$1' is not generic"
-  ErrGenericArgLenMismatch = "Got $1 generic arguments, but expected $2"
+  ErrGenericArgLenMismatch = "got $1 generic arguments, but expected $2"
 
 #--
 # Compile-time info
