@@ -931,6 +931,19 @@ proc splitCall(ast: Node): tuple[callee: Sym, args: seq[Node]] {.codegen.} =
   else: discard
   result = (gen.lookup(callee), args)
 
+proc resolveGenerics*(gen: var CodeGen, callable: var Sym,
+                      callArgTypes: seq[Sym], errorNode: Node) =
+  ## Helper used to resolve generic parameters via inference.
+  if callable.isGeneric:
+    let genericArgs = gen.inferGenericArgs(callable, callArgTypes, errorNode)
+      .mapIt do:
+        if it.isSome: it.get
+        else:
+          errorNode.error(ErrCouldNotInferGeneric % errorNode.render)
+          nil
+    echo genericArgs
+    callable = gen.instantiate(callable, genericArgs, errorNode)
+
 proc callProc(procSym: Sym, argTypes: seq[Sym],
               errorNode: Node = nil): Sym {.codegen.} =
   ## Generate code that calls a procedure. ``errorNode`` is used for error
@@ -941,16 +954,8 @@ proc callProc(procSym: Sym, argTypes: seq[Sym],
     var theProc = gen.findOverload(procSym, argTypes, errorNode)
     if theProc.kind != skProc:
       errorNode.error(ErrSymKindMismatch % [$skProc, $theProc.kind])
-    if theProc.isGeneric:
-      let genericArgs = gen.inferGenericArgs(theProc, argTypes, errorNode)
-        .mapIt do:
-          if it.isSome: it.get
-          else:
-            errorNode.error(ErrCouldNotInferGeneric % errorNode.render)
-            nil
-      echo genericArgs
-      theProc = gen.instantiate(theProc, genericArgs, errorNode)
-
+    # resolve generic params
+    gen.resolveGenerics(theProc, argTypes, errorNode)
     # call the proc
     gen.chunk.emit(opcCallD)
     gen.chunk.emit(theProc.procId)
@@ -1467,9 +1472,10 @@ proc genFor(node: Node) {.codegen.} =
     argTypes.add(iterGen.genExpr(arg))
 
   # resolve the iterator's overload
-  let theIter = gen.findOverload(iterSym, argTypes, node[1])
+  var theIter = gen.findOverload(iterSym, argTypes, node[1])
   if theIter.kind != skIterator:
     node[1].error(ErrSymKindMismatch % [$skIterator, $theIter.kind])
+  gen.resolveGenerics(theIter, argTypes, node[1])
   iterGen.iter = theIter
 
   # declare all the variables passed as the iterator's arguments

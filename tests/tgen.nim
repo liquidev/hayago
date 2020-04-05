@@ -158,7 +158,7 @@ suite "compiler":
         yield tri.c
       }
 
-      for vert in vertices[number](t) {
+      for vert in vertices(t) {
         echo($vert)
       }
     """)
