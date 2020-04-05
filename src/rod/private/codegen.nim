@@ -22,34 +22,34 @@ import value
 
 const
   ErrorFmt = "$1($2, $3): $4"
-  ErrShadowResult = "Variable shadows implicit 'result' variable"
+  ErrShadowResult = "variable shadows implicit 'result' variable"
   ErrLocalRedeclaration = "'$1' is already declared in this scope"
   ErrGlobalRedeclaration = "'$1' is already declared"
   ErrUndefinedReference = "'$1' is not declared in the current scope"
   ErrLetReassignment = "'$1' cannot be reassigned"
-  ErrTypeMismatch = "Type mismatch: got <$1>, but expected <$2>"
-  ErrTypeMismatchChoice = "Type mismatch: got <$1>, but expected one of:$2"
+  ErrTypeMismatch = "type mismatch: got <$1>, but expected <$2>"
+  ErrTypeMismatchChoice = "type mismatch: got <$1>, but expected one of:$2"
   ErrNotAProc = "'$1' is not a proc"
   ErrInvalidField = "'$1' is not a valid field"
-  ErrNonExistentField = "Field '$1' does not exist"
-  ErrInvalidAssignment = "Cannot assign to '$1'"
+  ErrNonExistentField = "field '$1' does not exist"
+  ErrInvalidAssignment = "cannot assign to '$1'"
   ErrTypeIsNotAnObject = "'$1' is not an object type"
-  ErrObjectFieldsMustBeInitialized = "All object fields must be initialized"
+  ErrObjectFieldsMustBeInitialized = "all object fields must be initialized"
   ErrFieldInitMustBeAColonExpr =
-    "Field initializer must be a colon expression: 'a: b'"
+    "field initializer must be a colon expression: 'a: b'"
   ErrNoSuchField = "<$1> does not have the field '$2'"
-  ErrValueIsVoid = "Value does not have a valid type"
+  ErrValueIsVoid = "value does not have a valid type"
   ErrOnlyUsableInABlock =
     "'$1' can only be used inside a loop or a block statement"
   ErrOnlyUsableInALoop = "'$1' can only be used inside a loop"
   ErrOnlyUsableInAProc = "'$1' can only be used inside a proc"
   ErrOnlyUsableInAnIterator = "'$1' can only be used inside an iterator"
-  ErrVarMustHaveValue = "Variable must have a value"
-  ErrIterMustHaveYieldType = "Iterator must have a non-void yield type"
+  ErrVarMustHaveValue = "variable must have a value"
+  ErrIterMustHaveYieldType = "iterator must have a non-void yield type"
   ErrSymKindMismatch = "$1 expected, but got $2"
   ErrInvalidSymName = "'$1' is not a valid symbol name"
   ErrCouldNotInferGeneric =
-    "Could not infer generic params for '$1'. Specify them explicitly"
+    "could not infer generic params for '$1'. Specify them explicitly"
   ErrNotGeneric = "'$1' is not generic"
   ErrGenericArgLenMismatch = "Got $1 generic arguments, but expected $2"
 
@@ -295,7 +295,7 @@ proc sameType(a, b: Sym): bool =
   assert a.kind in skTyped and b.kind in skTyped,
     "type comparison can't be done on non-type symbols"
 
-  # make 'em mutable for the next segment
+  # make them mutable for the next segment
   var (a, b) = (a, b)
 
   # handle generic params as a special case, because they're a different kind of
