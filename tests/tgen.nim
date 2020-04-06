@@ -3,6 +3,7 @@ import times
 import unittest
 
 import rod/private/scanner
+import rod/private/sym
 import rod/private/parser
 import rod/private/chunk
 import rod/private/codegen

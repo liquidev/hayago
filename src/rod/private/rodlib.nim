@@ -6,10 +6,12 @@
 
 ## This module implements the rod standard library modules.
 
+import ast
 import chunk
 import codegen
 import parser
 import scanner
+import sym
 import value
 
 proc compileRod*(script: Script, module: Module, filename, code: string) =
