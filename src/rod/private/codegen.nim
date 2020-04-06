@@ -137,15 +137,25 @@ proc popScope(gen: var CodeGen) =
     gen.chunk.emit(gen.currentScope.varCount.uint8)
   discard gen.scopes.pop()
 
-proc addSym(gen: var CodeGen, sym: Sym, lookupName: Node = nil) =
+proc scope(gen: CodeGen, index: int): Scope =
+  ## Gets the local scope at level ``index``.
+  ## This treats -1 as the global scope.
+  result =
+    if index == -1: gen.module
+    else: gen.scopes[index]
+
+proc addSym(gen: var CodeGen, sym: Sym, lookupName: Node = nil,
+            scopeOffset = 0) =
   ## Add a symbol to a scope. If ``name.len != 0``, ``$name`` is used as the
   ## symbol's lookup name instead of ``$sym.name``.
+  ##
   let name =
     if lookupName != nil: lookupName
     else: sym.name
   if gen.scopes.len > 0:
     # local sym
-    if not gen.currentScope.add(sym, lookupName):
+    # jeez this is such a hack, but I don't know of a cleaner way to do it
+    if not gen.scope(gen.scopes.len - (scopeOffset + 1)).add(sym, lookupName):
       name.error(ErrLocalRedeclaration % [$name])
   else:
     # global sym
@@ -904,9 +914,9 @@ proc genProc(node: Node, isInstantiation = false): Sym {.codegen.} =
                                           params, returnTy, kind = pkNative)
   sym.genericParams = genericParams
 
-  # add the proc into the current scope
+  # add the proc into the declaration scope
   # we need to do this here, otherwise recursive calls will be broken
-  gen.addSym(sym)
+  gen.addSym(sym, scopeOffset = ord(sym.genericParams.isSome))
 
   # if we're in an instantiation or the proc is not generic, generate its code
   if not sym.isGeneric or isInstantiation:
