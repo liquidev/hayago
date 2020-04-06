@@ -73,6 +73,7 @@ affairs when it comes to features:
     - generic type inference
       - [x] in procedure calls
       - [ ] in object constructors
+  - [ ] modules and `import`
   - [ ] embedding
     - [ ] low-level, unsafe functionality
     - [ ] high-level macro-based API
