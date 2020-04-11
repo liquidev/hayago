@@ -148,14 +148,14 @@ proc addSym(gen: var CodeGen, sym: Sym, lookupName: Node = nil,
             scopeOffset = 0) =
   ## Add a symbol to a scope. If ``name.len != 0``, ``$name`` is used as the
   ## symbol's lookup name instead of ``$sym.name``.
-  ##
+
   let name =
     if lookupName != nil: lookupName
     else: sym.name
   if gen.scopes.len > 0:
     # local sym
     # jeez this is such a hack, but I don't know of a cleaner way to do it
-    if not gen.scope(gen.scopes.len - (scopeOffset + 1)).add(sym, lookupName):
+    if not gen.scope(gen.scopes.len - scopeOffset - 1).add(sym, lookupName):
       name.error(ErrLocalRedeclaration % [$name])
   else:
     # global sym
