@@ -87,6 +87,9 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
         b {.inject.} = stack.pop()
         a {.inject.} = stack.pop()
       stack.push(initValue(expr))
+    template binaryInpl(someVal, op) =
+      let b = stack.pop()
+      op(stack[stack.len - 1].someVal, b.someVal)
 
     template storeFrame() =
       when defined(rodVmWritePcFlow):
@@ -207,13 +210,13 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
     of opcNegN: # negate a number
       unary(-a.numberVal)
     of opcAddN: # add two numbers
-      binary(a.numberVal + b.numberVal)
+      binaryInpl(numberVal, `+=`)
     of opcSubN: # subtract two numbers
-      binary(a.numberVal - b.numberVal)
+      binaryInpl(numberVal, `-=`)
     of opcMultN: # multiply two numbers
-      binary(a.numberVal * b.numberVal)
+      binaryInpl(numberVal, `*=`)
     of opcDivN: # divide two numbers
-      binary(a.numberVal / b.numberVal)
+      binaryInpl(numberVal, `/=`)
 
     #--
     # Logic

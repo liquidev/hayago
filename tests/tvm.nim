@@ -3,6 +3,7 @@ import tables
 import times
 import unittest
 
+import rod/private/ast
 import rod/private/scanner
 import rod/private/parser
 import rod/private/chunk
@@ -10,7 +11,7 @@ import rod/private/codegen
 import rod/private/disassembler
 import rod/private/vm
 import rod/private/rodlib
-import rod/private/common
+import rod/private/sym
 
 template benchmark(name, body) =
   let t0 = epochTime()
@@ -138,7 +139,7 @@ suite "VM":
         }
       """)
       assert false, "did not catch error; 'i' is visible"
-    except RodError as err:
+    except RodCompileError as err:
       echo "pass - ", err.msg
     run("""
       for x in 1..10 {

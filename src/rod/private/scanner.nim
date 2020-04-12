@@ -1,24 +1,30 @@
 #--
 # the rod scripting language
-# copyright (C) iLiquid, 2019
+# copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
 
+import parseutils
 import strutils
 import tables
 
-import common
-
 type
+  RodSyntaxError* = object of ValueError
+    errors*: seq[ParseError]
+  ParseError* = object
+    message*, file*: string
+    ln*, col*: int
   Scanner* = object
     file*, input: string
     pos, ln*, col*: int
+    errors: seq[ParseError]
+    panic: bool
   TokenKind* = enum
     tokNone = "<invalid>"
     # Literals
     tokTrue = "true", tokFalse = "false"
-    tokNumber = "Number", tokString = "String"
-    tokOperator = "Operator", tokIdent = "Identifier"
+    tokNumber = "number", tokString = "string"
+    tokOperator = "operator", tokIdent = "identifier"
     # Punctuation
     tokLPar = "(", tokRPar = ")"
     tokLBrace = "{", tokRBrace = "}"
@@ -96,12 +102,14 @@ const Utf8Chars = {'\x80'..'\xff'}
 const IdentStartChars = strutils.IdentStartChars + Utf8Chars
 const IdentChars = strutils.IdentChars + Utf8Chars
 
-proc error*(scan: Scanner, msg: string) =
-  raise (ref RodError)(kind: reSyntax,
-                       msg: scan.file & "(" & $scan.ln & ", " & $scan.col &
-                            "): " & msg,
-                       file: scan.file,
-                       ln: scan.ln, col: scan.col)
+proc error*(scan: var Scanner, message: string) =
+  if not scan.panic:
+    scan.errors.add(ParseError(message: message, file: scan.file,
+                               ln: scan.ln, col: scan.col))
+    scan.panic = true
+
+proc syncError*(scan: var Scanner) =
+  scan.panic = false
 
 proc atEnd*(scan: Scanner): bool =
   result = scan.pos >= scan.input.len
@@ -277,7 +285,16 @@ proc pattern*(scan: var Scanner, patt: openarray[TokenKind]): bool =
   scan.col = col
   result = true
 
+proc finish*(scan: Scanner) =
+  if scan.errors.len != 0:
+    var message = ""
+    for i, err in scan.errors:
+      message.add("$1($2, $3): $4" % [$err.file, $err.ln, $err.col,
+                                      $err.message])
+      if i != scan.errors.len:
+        message.add('\n')
+    raise (ref RodSyntaxError)(msg: message, errors: scan.errors)
+
 proc initScanner*(input: string, file = "input"): Scanner =
   result = Scanner(file: file, input: input,
                    ln: 1, col: 0)
-

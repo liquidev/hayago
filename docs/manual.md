@@ -30,8 +30,8 @@ Comments in rod look exactly as in C++. Only single-line comments are supported.
 rod supports ordinary number and string literals.
 
 ```rod
-3.141592        // This is a number literal
-"Hello, world!" // This is a string literal
+3.141592         // This is a number literal
+"Hello, world!"  // This is a string literal
 ```
 
 As of now, only basic literals (as shown above) are supported. So no scientific,
@@ -96,7 +96,7 @@ look like:
 Another, more compact style is also supported:
 ```rod
 { echo("Hello, world!")
-  echo("Going compact!") } // notice how a line break isn't required here
+  echo("Going compact!") }  // notice how a line break isn't required here
 ```
 The above syntax is an exception to the usual statement rules. In blocks, `}`
 can also be used as a statement terminator.
@@ -107,8 +107,8 @@ Variables are a very important part of any language. rod offers two ways of
 declaring them:
 ```rod
 // using var:
-var a, b = 2     // both a and b have the value 2
-var c, d: string // both c and d have the type string with its default value ""
+var a, b = 2      // both a and b have the value 2
+var c, d: string  // both c and d have the type string with its default value ""
 // using let:
 let x, y = 5
 // let z, w: bool - error: 'let' variables must have a value.
@@ -118,7 +118,7 @@ declares a regular variable, and `let` declares a single-assignment variable.
 Attempting to assign to such a variable twice will result in a compile error:
 ```rod
 let x = 2
-x = 3 // error: attempt to reassign a 'let' variable
+x = 3      // error: attempt to reassign a 'let' variable
 ```
 Even though `let` variables cannot be reassigned, that does not mean their value
 cannot be changed: if their value is an object, its fields can be modified just
@@ -129,8 +129,8 @@ always stay a number variable, until it goes out of scope. The type of a
 variable cannot be changed.
 ```rod
 var x = 3
-x = "Hello, world!" // error: type mismatch, attempt to assign a string to a
-                    // number variable
+x = "Hello, world!"  // error: type mismatch, attempt to assign a string to a
+                     // number variable
 ```
 Currently there's no way of defining a variable without specifying a value,
 but that's subject to change.
@@ -248,11 +248,15 @@ while condition {
 }
 ```
 An infinite loop may be created by setting the condition to a `true` constant.
+This literal `while true` loop is optimized by the code generator, and does not
+do the initial condition check—it simply jumps back to the beginning when the
+block is completed.
 ```rod
 while true {
   // do things indefinitely
 }
 ```
+Similarly, a `while false` loop generates no code at all.
 
 A `while` loop can be stopped by using the `break` keyword.
 ```rod
@@ -402,6 +406,7 @@ rod procedures can be called in 3 different ways:
 - With method call syntax – `arg1.someProc(arg2, ...)`
 - With getter syntax – `arg1.someProc`
 
+This allows for extra clarity in object-oriented code.
 The two first examples are functionally equivalent. The third example is not
 the same, because this syntax can only be used for calling procs which accept 1
 parameter.
@@ -443,7 +448,7 @@ It is always the default value for that type (eg. `0` for numbers).
 
 There's also another way of calling procs: that way is through assignment.
 Only 'setters' can be called this way. A setter is declared by adding `=` to the
-proc's name. Because `=` is not a valid identifier character, the name must be
+proc's name. Because `=` is not an identifier character, the name must be
 stropped:
 ```rod
 proc `someProperty=`(a: number, b: number) {
@@ -457,7 +462,7 @@ a.someProperty = b
 ```
 In a nutshell, they look exactly like an object field assignment. However, a
 proc is called instead, and property setters can be declared for non-object
-types like `number`s.
+types like `number`s (albeit it's a bit useless in that case).
 
 Object field assigmnents take precedence over setters:
 ```rod
@@ -506,10 +511,9 @@ proc `+`(a, b: Vec2) -> Vec2 {
   result = Vec2(x: a.x + b.x, y: a.y + b.y)
 }
 
-var
-  a = Vec2(x: 3, y: 2),
-  b = Vec2(x: 2, y: 3),
-  c = a + b // Vec2(x: 5, y: 5)
+var a = Vec2(x: 3, y: 2)
+var b = Vec2(x: 2, y: 3)
+var c = a + b             // Vec2(x: 5, y: 5)
 ```
 As shown above, this feature is most useful with mathematical types, like
 vectors.
@@ -526,7 +530,7 @@ iterator emptyIter() -> number {
   // body
 }
 ```
-An iterator *must* have a return value. An iterator with no return value is a
+An iterator *must* have a yield type. An iterator with no yield type is a
 compile error.
 
 Iterators have a special statement that can be used in them: the `yield`
@@ -571,63 +575,81 @@ iterator countup(min, max: number) -> number {
 }
 
 for x in countup(1, 10) {
-  echo(i) // error: 'i' is not defined
+  echo(i)  // error: 'i' is not defined
 }
 ```
 The scopes defined in the iterator are actually completely separate from the
 scopes in the iterator's callsite.
 
-## Coroutines
+## Generics
 
-Coroutines, in many ways, are very similar to iterators. The main difference,
-however, is that they are not just an inlining facility—a coroutine actually has
-a full runtime object representation, and can be paused and resumed at will.
-Also unlike iterators, coroutines can have no return type. In that case, `yield`
-is used without a value.
+Generics are rod's way of generalizing code. They work similarly to C++
+templates or Nim generics.
 
-Coroutines in rod are similar to the ones found in Wren and Lua. The main
-difference, however, is that they use special syntax for coroutine definitions.
-Here's what a coroutine looks like:
+Valid symbols for being generic are types and callables (procedures and
+iterators). Making a symbol generic involves adding square brackets with
+*generic parameters* after the symbol's name:
+
 ```rod
-coro counter(x: number) -> number {
-  for i in 1..x {
-    yield i
-  }
+object MyGenericObject[T] {}
+
+proc myGenericProc[T] {}
+
+iterator myGenericIterator[T] -> number {}
+```
+
+After definition, generic parameters behave like normal types: they can be
+used in fields (for objects), or parameters, the return type, and the body (for
+callables). Example:
+
+```rod
+object Pair[T] {
+  a, b: T  // creates a new field of an unknown type `T`
+}
+
+proc print[T](a: T) {
+  echo($a)
 }
 ```
 
-Calling the coroutine *with no parameters* creates a new `coro` object:
-```rod
-var count = counter()
-echo(count) // <coro>
-```
-As already illustrated by this example, a newly created coroutine does not
-immediately start executing. Instead, it has to be called:
-```rod
-echo(count(10)) // 1
-echo(count(10)) // 2
-```
-The state of the coroutine can be queried with `done`:
-```rod
-while not count.done {
-  echo(count(10))
-}
-```
-The main power of coroutines comes from the fact that different parameters can
-be passed to them each time they're resumed. For instance:
-```rod
-coro echo3(x: number) {
-  echo(x)
-  yield
-  echo(x)
-  yield
-  echo(x)
-}
+Generic symbols cannot be used by themselves. Instead, they must be
+*instantiated*. Continuing the previous example, instantiations occur through
+the use of square brackets:
 
-var echoer = echo3()
-echoer(1) // 1
-echoer(2) // 2
-echoer(3) // 3
-assert(echoer.done)
+```rod
+let nums = Pair[number](a: 1, b: 2)
+
+print[number](2)
 ```
 
+However, this quickly gets verbose, so rod offers *basic* generic type inference
+from call parameters and fields:
+
+```rod
+let nums = Pair(a: 1, b: 2)
+//  ^ instantiated as Pair[number], because the provided value for `a: T`
+//    is a `number`
+
+print(2)
+// ^ instantiated as print[number], because the provided value for `a: T`
+//   is a `number`
+```
+
+Note that type inference does not work for return types. In that case, the type
+must be provided explicitly:
+
+```rod
+object Box[T] {
+  boxed: T
+}
+
+proc newEmptyBox[T] -> Box[T] {}
+
+let numbox1 = newEmptyBox[number]()          // ok
+// let numbox2 = newEmptyBox()               // error
+// let numbox3: Box[number] = newEmptyBox()  // error
+```
+
+This is not allowed to keep the language implementation simple. Advanced type
+inference like this would require much more context (ie. the call's
+surroundings), and thus, increase code generation complexity by a fair bit.

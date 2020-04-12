@@ -3,6 +3,7 @@ import times
 import unittest
 
 import rod/private/scanner
+import rod/private/sym
 import rod/private/parser
 import rod/private/chunk
 import rod/private/codegen
@@ -14,18 +15,7 @@ template benchmark(name, body) =
   body
   echo name, " took ", (epochTime() - t0) * 1000, "ms"
 
-template dumpTokens(input: string) =
-  var
-    scanner = initScanner(input, "dump.rod")
-    token: Token
-  while true:
-    token = scanner.next()
-    echo token
-    if token.kind == tokEnd:
-      break
-
 template compile(input: string) =
-  dumpTokens(input)
   benchmark("compilation"):
     var scanner = initScanner(input, "testcase.rod")
     let ast = parseScript(scanner)
@@ -37,7 +27,6 @@ template compile(input: string) =
       cp = initCodeGen(script, module, main)
     module.load(system)
     cp.genScript(ast)
-  echo ast.treeRepr
   echo module
   echo `$`(script, {
     "system.rod": RodlibSystemSrc,
@@ -136,5 +125,41 @@ suite "compiler":
           result = result * i
           i = i + 1
         }
+      }
+    """)
+  test "generic objects":
+    compile("""
+      object Pair[T] {
+        a, b: T
+      }
+
+      var p = Pair[number](a: 1, b: 2)
+    """)
+  test "generic procs":
+    compile("""
+      proc print[T](x, y, z: T) {
+        echo($x)
+        echo($y)
+        echo($z)
+      }
+
+      print(1, 2, 3)
+    """)
+  test "generic iterators":
+    compile("""
+      object Tri[T] {
+        a, b, c: T
+      }
+
+      var t = Tri[number](a: 1, b: 2, c: 3)
+
+      iterator vertices[T](tri: Tri[T]) -> T {
+        yield tri.a
+        yield tri.b
+        yield tri.c
+      }
+
+      for vert in vertices(t) {
+        echo($vert)
       }
     """)

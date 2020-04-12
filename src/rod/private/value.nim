@@ -30,7 +30,7 @@ type
     case typeId*: TypeId ## The type ID, used for dynamic dispatch.
     of tyBool: boolVal*: bool
     of tyNumber: numberVal*: float
-    of tyString: stringVal*: string
+    of tyString: stringVal*: ref string
     else: objectVal*: Object
   Stack* = seq[Value] ## A runtime stack of values, used in the VM.
   StackView* = ptr UncheckedArray[Value] ## An unsafe view into a Stack.
@@ -42,7 +42,7 @@ proc `$`*(value: Value): string =
     of tyNil: "nil"
     of tyBool: $value.boolVal
     of tyNumber: $value.numberVal
-    of tyString: escape($value.stringVal)
+    of tyString: escape($value.stringVal[])
     else: "<object>"
 
 proc initValue*(value: bool): Value =
@@ -55,7 +55,9 @@ proc initValue*(value: float): Value =
 
 proc initValue*(value: string): Value =
   ## Initializes a string value.
-  result = Value(typeId: tyString, stringVal: value)
+  result = Value(typeId: tyString)
+  new(result.stringVal)
+  result.stringVal[] = value
 
 proc initValue*[T: tuple | object | ref](id: TypeId, value: T): Value =
   ## Safely initializes a foreign object value.

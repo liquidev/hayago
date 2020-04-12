@@ -4,8 +4,8 @@
 # licensed under the MIT license
 #--
 
-import strutils
-import tables
+import std/strutils
+import std/tables
 
 import chunk
 
