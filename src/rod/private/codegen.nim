@@ -240,7 +240,7 @@ proc declareVar(gen: var CodeGen, name: Node, kind: SymKind, ty: Sym,
     result.varStackPos = gen.varCount
   gen.addSym(result)
 
-proc lookup(gen: var CodeGen, symName: Node): Sym
+proc lookup(gen: var CodeGen, symName: Node, quiet = false): Sym
 
 proc genProc(node: Node, isInstantiation = false): Sym {.codegen.}
 proc genIterator(node: Node, isInstantiation = false): Sym {.codegen.}
@@ -344,8 +344,9 @@ proc inferGenericArgs(gen: var CodeGen, sym: Sym,
     result.add(if genericParam in types: some(types[genericParam])
                else: Sym.none)
 
-proc lookup(gen: var CodeGen, symName: Node): Sym =
+proc lookup(gen: var CodeGen, symName: Node, quiet = false): Sym =
   ## Look up the symbol with the given ``name``.
+  ## If ``quiet`` is true, an error will not be raised on undefined reference.
 
   # find out the symbol's name
   var name: Node
@@ -354,7 +355,7 @@ proc lookup(gen: var CodeGen, symName: Node): Sym =
   of nkIndex: name = symName[0]  # generic instantiation
   else: discard
   if name == nil or name.kind != nkIdent:
-    symName.error(ErrInvalidSymName % $symName)
+    symName.error(ErrInvalidSymName % symName.render)
 
   # try to find a local symbol
   if gen.scopes.len > 0:
@@ -367,7 +368,10 @@ proc lookup(gen: var CodeGen, symName: Node): Sym =
     result = gen.module.syms[name.ident]
   # if we still don't have a sym, it doesn't exist.
   if result == nil:
-    name.error(ErrUndefinedReference % $name)
+    if not quiet:
+      name.error(ErrUndefinedReference % $name)
+    else:
+      return
 
   if symName.kind == nkIndex:
     if result.isGeneric:
@@ -377,7 +381,7 @@ proc lookup(gen: var CodeGen, symName: Node): Sym =
           genericParams.add(gen.lookup(param))
       result = gen.instantiate(result, genericParams, errorNode = name)
     else:
-      name.error(ErrNotGeneric % $name)
+      name.error(ErrNotGeneric % name.render)
 
 proc popVar(gen: var CodeGen, name: Node) =
   ## Pop the value at the top of the stack to the variable ``name``.
@@ -518,7 +522,7 @@ proc splitCall(ast: Node): tuple[callee: Sym, args: seq[Node]] {.codegen.} =
   var
     callee: Node
     args: seq[Node]
-  assert ast.kind in {nkPrefix, nkInfix, nkCall}
+  assert ast.kind in {nkPrefix, nkInfix, nkCall, nkDot}
   case ast.kind
   of nkPrefix:
     callee = ast[0]
@@ -527,8 +531,17 @@ proc splitCall(ast: Node): tuple[callee: Sym, args: seq[Node]] {.codegen.} =
     callee = ast[0]
     args = ast[1..2]
   of nkCall:
-    callee = ast[0]
-    args = ast[1..^1]
+    if ast[0].kind == nkDot:
+      let lhs = ast[0]
+      callee = lhs[1]
+      args = @[lhs[0]]
+      args.add(ast[1..^1])
+    else:
+      callee = ast[0]
+      args = ast[1..^1]
+  of nkDot:
+    callee = ast[1]
+    args = @[ast[0]]
   else: discard
   result = (gen.lookup(callee), args)
 
@@ -644,24 +657,27 @@ proc infix(node: Node): Sym {.codegen.} =
     case node[0].ident
     # assignment is special
     of "=":
-      case node[1].kind
+      let
+        receiver = node[1]
+        value = node[2]
+      case receiver.kind
       of nkIdent: # to a variable
         let
-          sym = gen.lookup(node[1]) # look the variable up
-          valTy = gen.genExpr(node[2]) # generate the value
+          sym = gen.lookup(receiver) # look the variable up
+          valTy = gen.genExpr(value) # generate the value
         if valTy == sym.varTy:
           # if the variable's type matches the type of the value, we're ok
-          gen.popVar(node[1])
+          gen.popVar(receiver)
         else:
           node.error(ErrTypeMismatch % [$valTy.name, $sym.varTy.name])
       of nkDot: # to an object field
-        if node[1][1].kind != nkIdent:
+        if receiver[1].kind != nkIdent:
           # object fields are always identifiers
-          node[1][1].error(ErrInvalidField % $node[1][1])
+          receiver[1].error(ErrInvalidField % $node[1][1])
         let
-          typeSym = gen.genExpr(node[1][0]) # generate the receiver's code
-          fieldName = node[1][1].ident
-          valTy = gen.genExpr(node[2]) # generate the value's code
+          typeSym = gen.genExpr(receiver[0]) # generate the receiver's code
+          fieldName = receiver[1].ident
+          valTy = gen.genExpr(value) # generate the value's code
         if typeSym.tyKind == tkObject and fieldName in typeSym.objectFields:
           # assign the field if it's valid, using popF
           let field = typeSym.objectFields[fieldName]
@@ -670,36 +686,49 @@ proc infix(node: Node): Sym {.codegen.} =
           gen.chunk.emit(opcPopF)
           gen.chunk.emit(field.id.uint8)
         else:
-          node[1].error(ErrNonExistentField % fieldName)
+          # otherwise, try to find a matching setter
+          let setter = gen.lookup(newIdent(fieldName & '='))
+          if setter == nil:
+            receiver.error(ErrNonExistentField % [fieldName, $typeSym])
+          result = gen.callProc(setter, argTypes = @[typeSym, valTy],
+                                errorNode = node)
       else: node.error(ErrInvalidAssignment % $node)
-      # assignment doesn't return anything
-      result = gen.module.sym"void"
+      # assignment doesn't return anything (in most cases, setters can be
+      # declared to return a value, albeit it's not that useful)
+      if result != nil:
+        result = gen.module.sym"void"
     # ``or`` and ``and`` are special, because they're short-circuiting.
     # that's why they need a little more special care.
     of "or": # ``or``
-      let aTy = gen.genExpr(node[1]) # generate the left-hand side
+      let
+        lhs = node[1]
+        rhs = node[2]
+      let aTy = gen.genExpr(lhs) # generate the left-hand side
       # if it's ``true``, jump over the rest of the expression
       gen.chunk.emit(opcJumpFwdT)
       let hole = gen.chunk.emitHole(2)
       # otherwise, check the right-hand side
       gen.chunk.emit(opcDiscard)
       gen.chunk.emit(1'u8)
-      let bTy = gen.genExpr(node[2]) # generate the right-hand side
-      if aTy.tyKind != tkBool: node[1].error(ErrTypeMismatch % [$aTy, "bool"])
-      if bTy.tyKind != tkBool: node[2].error(ErrTypeMismatch % [$bTy, "bool"])
+      let bTy = gen.genExpr(rhs) # generate the right-hand side
+      if aTy.tyKind != tkBool: lhs.error(ErrTypeMismatch % [$aTy, "bool"])
+      if bTy.tyKind != tkBool: rhs.error(ErrTypeMismatch % [$bTy, "bool"])
       gen.chunk.patchHole(hole)
       result = gen.module.sym"bool"
     of "and": # ``and``
-      let aTy = gen.genExpr(node[1]) # generate the left-hand side
+      let
+        lhs = node[1]
+        rhs = node[1]
+      let aTy = gen.genExpr(lhs) # generate the left-hand side
       # if it's ``false``, jump over the rest of the expression
       gen.chunk.emit(opcJumpFwdF)
       let hole = gen.chunk.emitHole(2)
       # otherwise, check the right-hand side
       gen.chunk.emit(opcDiscard)
       gen.chunk.emit(1'u8)
-      let bTy = gen.genExpr(node[2]) # generate the right-hand side
-      if aTy.tyKind != tkBool: node[1].error(ErrTypeMismatch % [$aTy, "bool"])
-      if bTy.tyKind != tkBool: node[2].error(ErrTypeMismatch % [$bTy, "bool"])
+      let bTy = gen.genExpr(rhs) # generate the right-hand side
+      if aTy.tyKind != tkBool: lhs.error(ErrTypeMismatch % [$aTy, "bool"])
+      if bTy.tyKind != tkBool: rhs.error(ErrTypeMismatch % [$bTy, "bool"])
       gen.chunk.patchHole(hole)
       result = gen.module.sym"bool"
     else: discard
@@ -730,7 +759,7 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
     # we make sure the field actually exists
     let name = f[0].ident
     if name notin result.objectFields:
-      f[0].error(ErrNoSuchField % [$result.name, name])
+      f[0].error(ErrNonExistentField % [name, $result])
 
     # then we assign the field a value.
     let field = result.objectFields[name]
@@ -740,7 +769,7 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   for (value, field) in fields:
     let ty = gen.genExpr(value)
     if ty != field.ty:
-      node.error(ErrTypeMismatch % [$ty.name, $field.ty.name])
+      node.error(ErrTypeMismatch % [$ty, $field])
 
   # construct the object
   gen.chunk.emit(opcConstrObj)
@@ -756,17 +785,36 @@ proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
     argTypes.add(gen.genExpr(arg))
 
   # ...and delegate the call to callProc
-  result = gen.callProc(procSym, argTypes, node)
+  result = gen.callProc(procSym, argTypes, errorNode = node)
 
 proc call(node: Node): Sym {.codegen.} =
   ## Generates code for an nkCall (proc call or object constructor).
-  let sym = gen.lookup(node[0])  # lookup the left-hand side
-  if sym.kind == skType:
-    # object construction
-    result = gen.objConstr(node, sym)
+  ## TODO: Indirect calls
+  case node[0].kind
+  of nkIdent:
+    # the call is direct or from a variable
+    let sym = gen.lookup(node[0])  # lookup the left-hand side
+    if sym.kind == skType:
+      # object construction
+      result = gen.objConstr(node, sym)
+    else:
+      # procedure call
+      result = gen.procCall(node, sym)
+  of nkDot:
+    # the call is an indirect call or a method call
+    let
+      lhs = node[0]
+      callee = gen.lookup(lhs[1], quiet = true)
+    if callee == nil:
+      assert false, "indirect calls are not implemented yet: " & node.render
+    else:
+      var argTypes = @[gen.genExpr(lhs[0])]
+      for arg in node[1..^1]:
+        argTypes.add(gen.genExpr(arg))
+      result = gen.callProc(callee, argTypes, errorNode = node)
   else:
-    # procedure call
-    result = gen.procCall(node, sym)
+    # the call is an indirect call
+    assert false, "indirect calls are not implemented yet: " & node.render
 
 proc genGetField(node: Node): Sym {.codegen.} =
   ## Generate code for field access.
@@ -788,7 +836,12 @@ proc genGetField(node: Node): Sym {.codegen.} =
     gen.chunk.emit(opcPushF)
     gen.chunk.emit(field.id.uint8)
   else:
-    node.error(ErrNoSuchField % [$typeSym.name, fieldName])
+    # if the field doesn't actually exist, we find an appropriate proc that will
+    # retrieve it for us
+    let getter = gen.lookup(node[1])
+    if getter == nil:
+      node[1].error(ErrNonExistentField % [fieldName, $typeSym])
+    result = gen.callProc(getter, argTypes = @[typeSym], errorNode = node)
 
 proc genBlock(node: Node, isStmt: bool): Sym {.codegen.}
 

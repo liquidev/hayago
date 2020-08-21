@@ -163,3 +163,26 @@ suite "compiler":
         echo($vert)
       }
     """)
+  test "UFCS":
+    compile("""
+      object ObjWithSetter {
+        fA: number
+      }
+
+      proc a(x: ObjWithSetter) -> number {
+        result = x.fA
+      }
+
+      proc `a=`(x: ObjWithSetter, a: number) {
+        echo("assigning to fA")
+        x.fA = a
+      }
+
+      proc printA(x: ObjWithSetter) {
+        echo($x.a)
+      }
+
+      var x = ObjWithSetter(fA: 1)
+      x.a = 2
+      x.printA()
+    """)

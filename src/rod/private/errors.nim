@@ -12,18 +12,18 @@ const
   ErrLocalRedeclaration* = "'$1' is already declared in this scope"
   ErrGlobalRedeclaration* = "'$1' is already declared"
   ErrUndefinedReference* = "'$1' is not declared in the current scope"
-  ErrLetReassignment* = "'$1' cannot be reassigned because it's a 'let' variable"
+  ErrLetReassignment* =
+    "'$1' cannot be reassigned because it's a 'let' variable"
   ErrTypeMismatch* = "type mismatch: got <$1>, but expected <$2>"
   ErrTypeMismatchChoice* = "type mismatch: got <$1>, but expected one of:$2"
   ErrNotAProc* = "'$1' is not a procedure"
   ErrInvalidField* = "'$1' is not a valid field"
-  ErrNonExistentField* = "field '$1' does not exist"
+  ErrNonExistentField* = "field '$1' does not exist for <$2>"
   ErrInvalidAssignment* = "cannot assign to '$1'"
   ErrTypeIsNotAnObject* = "'$1' is not an object type"
   ErrObjectFieldsMustBeInitialized* = "all object fields must be initialized"
   ErrFieldInitMustBeAColonExpr* =
     "field initializer must be a colon expression: 'a: b'"
-  ErrNoSuchField* = "<$1> does not have the field '$2'"
   ErrValueIsVoid* = "value does not have a valid type (its type is <void>)"
   ErrOnlyUsableInABlock* =
     "'$1' can only be used inside a loop or a block statement"

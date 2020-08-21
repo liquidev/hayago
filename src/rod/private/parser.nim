@@ -20,15 +20,15 @@ template ruleGuard(body) =
       col = scan.col
   body
   when declared(result):
-    result.ln = ln
-    result.col = col
-    result.file = scan.file
+    if result != nil:
+      result.ln = ln
+      result.col = col
+      result.file = scan.file
 
 macro rule(pc) =
   ## Adds a ``scan`` parameter to a proc and wraps its body in a call to
   ## ``ruleGuard``.
-  pc[3].insert(1,
-    newIdentDefs(ident"scan", newTree(nnkVarTy, ident"Scanner")))
+  pc[3].insert(1, newIdentDefs(ident"scan", newTree(nnkVarTy, ident"Scanner")))
   if pc[6].kind != nnkEmpty:
     pc[6] = newCall("ruleGuard", newStmtList(pc[6]))
   result = pc
@@ -132,19 +132,23 @@ proc parseCommaList(scan: var Scanner, start, term: static TokenKind,
                     rule: proc (scan: var Scanner): Node): bool =
   ## Parses a comma-separated list.
   # commaList(s, t, rule) <- s ?rule *(',' rule) t
-  if scan.peek().kind == start:
-    discard scan.next()
-  else:
-    return false
+  when start != tokNone:
+    if scan.peek().kind == start:
+      discard scan.next()
+    else:
+      return false
   while true:
     if scan.atEnd:
       scan.error(fmt"Missing '{term}'")
+    elif scan.peek().kind == term:
+      discard scan.next()
+      break
     results.add(rule(scan))
     case scan.next().kind
     of tokComma: continue
     of term: break
     else:
-      scan.error("',' or '{term}' expected")
+      scan.error(fmt"',' or '{term}' expected")
   result = true
 
 proc parseProcHead(anon: bool, name,
@@ -223,17 +227,9 @@ proc parseInfix(left: Node, token: Token): Node {.rule.} =
     result = newTree(nkColon, left, parseExpr(scan, prec = PrecColon))
   of tokLPar: # call or object constructor
     result = newTree(nkCall, left)
-    while true:
-      if scan.atEnd:
-        scan.error("Missing right paren ')'")
-      let val = parseExpr(scan)
-      result.add(val)
-      let next = scan.next().kind
-      case next
-      of tokComma: continue
-      of tokRPar: break
-      else:
-        scan.error("Comma ',' or right paren ')' expected")
+    discard scan.parseCommaList(tokNone, tokRPar,
+                                result.children) do (scan: var Scanner) -> Node:
+      result = parseExpr(scan)
   else: scan.error("Unexpected token: " & $token.kind)
 
 proc parseExpr(prec = 0): Node {.rule.} =
@@ -362,7 +358,6 @@ proc parseStmt(): Node {.rule.} =
     of tokReturn: parseReturn(scan)
     of tokYield: parseYield(scan)
     else: parseExpr(scan)
-  scan.syncError()
 
 proc parseBlock(): Node {.rule.} =
   ## Parses a block.

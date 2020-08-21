@@ -8,17 +8,15 @@ import parseutils
 import strutils
 import tables
 
+import errors
+
 type
-  RodSyntaxError* = object of ValueError
-    errors*: seq[ParseError]
-  ParseError* = object
-    message*, file*: string
+  RodParseError* = object of Exception
+    file*: string
     ln*, col*: int
   Scanner* = object
     file*, input: string
     pos, ln*, col*: int
-    errors: seq[ParseError]
-    panic: bool
   TokenKind* = enum
     tokNone = "<invalid>"
     # Literals
@@ -103,13 +101,9 @@ const IdentStartChars = strutils.IdentStartChars + Utf8Chars
 const IdentChars = strutils.IdentChars + Utf8Chars
 
 proc error*(scan: var Scanner, message: string) =
-  if not scan.panic:
-    scan.errors.add(ParseError(message: message, file: scan.file,
-                               ln: scan.ln, col: scan.col))
-    scan.panic = true
-
-proc syncError*(scan: var Scanner) =
-  scan.panic = false
+  raise (ref RodParseError)(msg: ErrorFmt % [scan.file, $scan.ln, $scan.col,
+                                             message],
+                            file: scan.file, ln: scan.ln, col: scan.col)
 
 proc atEnd*(scan: Scanner): bool =
   result = scan.pos >= scan.input.len
@@ -284,16 +278,6 @@ proc pattern*(scan: var Scanner, patt: openarray[TokenKind]): bool =
   scan.ln = ln
   scan.col = col
   result = true
-
-proc finish*(scan: Scanner) =
-  if scan.errors.len != 0:
-    var message = ""
-    for i, err in scan.errors:
-      message.add("$1($2, $3): $4" % [$err.file, $err.ln, $err.col,
-                                      $err.message])
-      if i != scan.errors.len:
-        message.add('\n')
-    raise (ref RodSyntaxError)(msg: message, errors: scan.errors)
 
 proc initScanner*(input: string, file = "input"): Scanner =
   result = Scanner(file: file, input: input,
