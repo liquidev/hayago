@@ -1,8 +1,10 @@
 #--
-# the rod scripting language
+# the hayago scripting language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
+
+## This module defines AST nodes and AST node operations.
 
 import std/hashes
 import std/strutils

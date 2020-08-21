@@ -1,12 +1,11 @@
 #--
-# the rod scripting language
+# the hayago scripting language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
 
-## This module implements the rod standard library modules.
+## This module implements the hayago standard library modules.
 
-import ast
 import chunk
 import codegen
 import parser
@@ -14,10 +13,10 @@ import scanner
 import sym
 import value
 
-proc compileRod*(script: Script, module: Module, filename, code: string) =
-  ## Compile some rod code to the given script and module.
+proc compileHaya*(script: Script, module: Module, filename, code: string) =
+  ## Compile some hayago code to the given script and module.
   ## Any generated toplevel code is discarded. This should only be used for
-  ## declarations of rod-side things, eg. iterators.
+  ## declarations of hayago-side things, eg. iterators.
   var scanner = initScanner(code, filename)
   let ast = parseScript(scanner)
   var
@@ -26,7 +25,7 @@ proc compileRod*(script: Script, module: Module, filename, code: string) =
   gen.genScript(ast)
 
 const
-  RodlibSystemSrc* = """
+  HayalibSystemSrc* = """
     iterator `..`(min, max: number) -> number {
       var i = min
       while i <= max {
@@ -61,5 +60,5 @@ proc modSystem*(script: Script): Module =
       result = initValue(args[0].stringVal[]))
 
   # native stuff
-  script.compileRod(result, "system.rod", RodlibSystemSrc)
+  script.compileHaya(result, "system.hyo", HayalibSystemSrc)
 

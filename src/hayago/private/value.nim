@@ -1,5 +1,5 @@
 #--
-# the rod scripting language
+# the hayago scripting language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
@@ -22,11 +22,11 @@ const
 
 type
   TypeId* = range[0..32766] # Max amount of case object branches
-  Object* = ref object ## A rod object.
+  Object* = ref object ## A hayago object.
     case isForeign: bool
     of true: data*: pointer
     of false: fields*: seq[Value]
-  Value* = object ## A rod value.
+  Value* = object ## A hayago value.
     case typeId*: TypeId ## The type ID, used for dynamic dispatch.
     of tyBool: boolVal*: bool
     of tyNumber: numberVal*: float

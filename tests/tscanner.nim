@@ -1,6 +1,6 @@
 import unittest
 
-import rod/private/scanner
+import hayago/private/scanner
 
 template scan(input: string) =
   var

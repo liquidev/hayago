@@ -1,10 +1,10 @@
 #--
-# the rod programming language
+# the hayago programming language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
 
-## The VM is the hot core of rod, used for code execution.
+## The VM is the hot core of hayago, used for code execution.
 ## This VM is implemented *in the C way*, and **that's intentional**.
 ## It intentionally uses very unsafe and low-level practices to provide a
 ## reasonable execution speed.
@@ -37,14 +37,14 @@ proc read[T](code: ptr UncheckedArray[uint8], offset: int): T =
 proc push(stack: var Stack, val: Value) =
   ## Pushes ``val`` onto the stack.
   stack.add(val)
-  when defined(rodVmWriteStackOps):
+  when defined(hayaVmWriteStackOps):
     echo "push ", stack
 
 proc pop(stack: var Stack): Value =
   ## Pops a value off the stack.
   result = stack[^1]
   stack.setLen(stack.len - 1)
-  when defined(rodVmWriteStackOps):
+  when defined(hayaVmWriteStackOps):
     echo "pop  ", stack
 
 proc peek(stack: Stack): Value =
@@ -73,7 +73,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
     {.computedGoto.}
 
     let opcode = pc[0].Opcode
-    when defined(rodVmWritePcFlow):
+    when defined(hayaVmWritePcFlow):
       template relPc: int = cast[int](pc) - cast[int](chunk.code{0})
       echo "pc: ", toHex(relPc.BiggestInt, 8), " - ", opcode
 
@@ -92,13 +92,13 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       op(stack[stack.len - 1].someVal, b.someVal)
 
     template storeFrame() =
-      when defined(rodVmWritePcFlow):
+      when defined(hayaVmWritePcFlow):
         echo "storing frame"
       callStack.add((chunk: chunk,
                      pc: pc,
                      stackBottom: stackBottom))
     template restoreFrame() =
-      when defined(rodVmWritePcFlow):
+      when defined(hayaVmWritePcFlow):
         echo "restoring frame"
       # discard locals from current frame
       stack.setLen(stackBottom)
@@ -109,7 +109,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       stackBottom = frame.stackBottom
 
     template doCall(theProc: Proc) =
-      when defined(rodVmWritePcFlow):
+      when defined(hayaVmWritePcFlow):
         echo "entering procedure " & theProc.name
       storeFrame()
       stackBottom = stack.len - theProc.paramCount
@@ -117,7 +117,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       of pkNative:
         chunk = theProc.chunk
         pc = chunk.code{0}
-        when defined(rodVmWritePcFlow):
+        when defined(hayaVmWritePcFlow):
           echo "native proc; pc is now ", toHex(relPc.BiggestInt, 8)
         # the frame is restored by the return(Void|Val) opcode in the proc
       of pkForeign:

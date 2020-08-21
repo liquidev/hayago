@@ -1,5 +1,5 @@
 #--
-# the rod scripting language
+# the hayago scripting language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
@@ -91,7 +91,7 @@ type
     name: Node
     ty: Sym
     # TODO: default param values
-  RodCompileError* = object of ValueError
+  HayaCompileError* = object of ValueError
     file*: string
     ln*, col*: int
 

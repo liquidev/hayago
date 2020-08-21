@@ -3,15 +3,15 @@ import tables
 import times
 import unittest
 
-import rod/private/ast
-import rod/private/scanner
-import rod/private/parser
-import rod/private/chunk
-import rod/private/codegen
-import rod/private/disassembler
-import rod/private/vm
-import rod/private/rodlib
-import rod/private/sym
+import hayago/private/ast
+import hayago/private/scanner
+import hayago/private/parser
+import hayago/private/chunk
+import hayago/private/codegen
+import hayago/private/disassembler
+import hayago/private/vm
+import hayago/private/hayalib
+import hayago/private/sym
 
 template benchmark(name, body) =
   let t0 = epochTime()
@@ -20,7 +20,7 @@ template benchmark(name, body) =
 
 template run(input: string) =
   benchmark("compilation"):
-    var scanner = initScanner(input, "testcase.rod")
+    var scanner = initScanner(input, "testcase.hyo")
     let ast = parseScript(scanner)
     var
       # script
@@ -37,8 +37,8 @@ template run(input: string) =
     echo module
   when defined(dumpDisassembly):
     echo `$`(script, {
-      "system.rod": RodlibSystemSrc,
-      "testcase.rod": input,
+      "system.hyo": HayalibSystemSrc,
+      "testcase.hyo": input,
     }.toTable)
   var vm = newVm()
   benchmark("runtime"):
@@ -139,7 +139,7 @@ suite "VM":
         }
       """)
       assert false, "did not catch error; 'i' is visible"
-    except RodCompileError as err:
+    except HayaCompileError as err:
       echo "pass - ", err.msg
     run("""
       for x in 1..10 {

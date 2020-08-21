@@ -1,5 +1,5 @@
 #--
-# the rod scripting language
+# the hayago scripting language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
@@ -55,10 +55,10 @@ type
 
 proc error*(node: Node, msg: string) =
   ## Raise a compile error on the given node.
-  raise (ref RodCompileError)(
-                       file: node.file,
-                       ln: node.ln, col: node.col,
-                       msg: ErrorFmt % [node.file, $node.ln, $node.col, msg])
+  raise (ref HayaCompileError)(file: node.file,
+                               ln: node.ln, col: node.col,
+                               msg: ErrorFmt % [node.file, $node.ln, $node.col,
+                                                msg])
 
 proc allocCtx*(allocator: ContextAllocator): Context =
   while result in allocator.occupied:
@@ -741,7 +741,7 @@ proc objConstr(node: Node, ty: Sym): Sym {.codegen.} =
   if result.tyKind != tkObject:
     node.error(ErrTypeIsNotAnObject % $result.name)
 
-  # currently, rod doesn't allow the user to omit fields
+  # currently, hayago doesn't allow the user to omit fields
   # TODO: allow the user to not initialize some fields, and set them to their
   # corresponding types' default values instead.
   if node.len - 1 != result.objectFields.len:
@@ -1185,7 +1185,7 @@ proc genReturn(node: Node) {.codegen.} =
     if valTy != gen.procReturnTy:
       node[0].error(ErrTypeMismatch % [$valTy.name, $gen.procReturnTy.name])
 
-  # rod uses two different opcodes for void and non-void return, so we handle
+  # hayago uses two different opcodes for void and non-void return, so we handle
   # that
   if gen.procReturnTy.tyKind != tkVoid:
     gen.chunk.emit(opcReturnVal)

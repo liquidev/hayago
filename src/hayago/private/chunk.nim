@@ -1,5 +1,5 @@
 #--
-# the rod scripting language
+# the hayago scripting language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
@@ -47,7 +47,7 @@ type
     opcReturnVoid = "returnVoid" ## Return void from proc
     opcHalt = "halt"
 
-  Script* = ref object ## A complete rod script.
+  Script* = ref object ## A complete hayago script.
     procs*: seq[Proc] ## The procs declared across all of the script's modules.
     mainChunk*: Chunk ## The main chunk of this script.
     typeCount*: int ## The number of types in this script. Used for compilation.

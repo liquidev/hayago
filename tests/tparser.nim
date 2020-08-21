@@ -1,10 +1,11 @@
 import unittest
 
-import rod/private/scanner
-import rod/private/parser
+import hayago/private/ast
+import hayago/private/scanner
+import hayago/private/parser
 
 template parse(input: string) =
-  var scanner = initScanner(input, "testcase.rod")
+  var scanner = initScanner(input, "testcase.hyo")
   echo parseScript(scanner).render
 
 suite "parser":

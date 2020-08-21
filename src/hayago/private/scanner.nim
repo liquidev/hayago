@@ -1,17 +1,17 @@
 #--
-# the rod scripting language
+# the hayago scripting language
 # copyright (C) iLiquid, 2019-2020
 # licensed under the MIT license
 #--
 
-import parseutils
-import strutils
-import tables
+import std/parseutils
+import std/strutils
+import std/tables
 
 import errors
 
 type
-  RodParseError* = object of Exception
+  HayaParseError* = object of ValueError
     file*: string
     ln*, col*: int
   Scanner* = object
@@ -101,8 +101,8 @@ const IdentStartChars = strutils.IdentStartChars + Utf8Chars
 const IdentChars = strutils.IdentChars + Utf8Chars
 
 proc error*(scan: var Scanner, message: string) =
-  raise (ref RodParseError)(msg: ErrorFmt % [scan.file, $scan.ln, $scan.col,
-                                             message],
+  raise (ref HayaParseError)(msg: ErrorFmt % [scan.file, $scan.ln, $scan.col,
+                                              message],
                             file: scan.file, ln: scan.ln, col: scan.col)
 
 proc atEnd*(scan: Scanner): bool =

@@ -2,13 +2,13 @@ import tables
 import times
 import unittest
 
-import rod/private/scanner
-import rod/private/sym
-import rod/private/parser
-import rod/private/chunk
-import rod/private/codegen
-import rod/private/disassembler
-import rod/private/rodlib
+import hayago/private/scanner
+import hayago/private/sym
+import hayago/private/parser
+import hayago/private/chunk
+import hayago/private/codegen
+import hayago/private/disassembler
+import hayago/private/hayalib
 
 template benchmark(name, body) =
   let t0 = epochTime()
@@ -29,8 +29,8 @@ template compile(input: string) =
     cp.genScript(ast)
   echo module
   echo `$`(script, {
-    "system.rod": RodlibSystemSrc,
-    "testcase.rod": input,
+    "system.hyo": HayalibSystemSrc,
+    "testcase.hyo": input,
   }.toTable)
 
 suite "compiler":
