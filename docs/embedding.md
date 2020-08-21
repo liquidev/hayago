@@ -6,4 +6,5 @@ permalink: /embedding
 
 # Embedding guide
 
-It doesn't exist yet. The rod VM isn't implemented just yet.
+Embedding facilities are not yet implemented! Please wait until the language is
+more complete.
