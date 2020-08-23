@@ -11,19 +11,23 @@ import std/strutils
 
 type
   NodeKind* = enum
-    # building blocks
+
+    # leafs
     nkEmpty          # empty node
+    nkBool           # bool literal
+    nkInt            # int literal
+    nkFloat          # float literal
+    nkString         # string literal
+    nkIdent          # identifier
+
+    # general
     nkScript         # full script
     nkBlock          # a block - {...}
     nkIdentDefs      # identifier definitions - a, b: s = x
     nkFormalParams   # formal params - (a: s, ...) -> t
     nkGenericParams  # generic params - [T, U: X]
     nkRecFields      # record fields - { a, b: t; c: u }
-    # literals
-    nkBool           # bool literal
-    nkNumber         # number literal
-    nkString         # string literal
-    nkIdent          # identifier
+
     # expressions
     nkPrefix         # prefix operator - op expr
     nkInfix          # infix operator - left op right
@@ -32,8 +36,10 @@ type
     nkIndex          # index expression - left[a, ...]
     nkCall           # call - left(a, ...)
     nkIf             # if expression - if expr {...} elif expr {...} else {...}
+
     # types
     nkProcTy         # procedure type - proc (...) -> t
+
     # statements
     nkVar            # var declaration - var a = x
     nkLet            # let declaration - let a = x
@@ -43,30 +49,32 @@ type
     nkContinue       # continue statement - continue
     nkReturn         # return statement - return x
     nkYield          # yield statement - yield x
+
     # declarations
     nkObject         # object declaration - object o[T, ...] {...}
     nkProc           # procedure declaration - proc p(a: s, ...) -> t {...}
     nkIterator       # iterator declaration - iterator i(a: s, ...) -> t {...}
+
   Node* = ref object          ## An AST node.
     ln*, col*: int            ## Line information used for compile errors
     file*: string
     case kind*: NodeKind      ## The kind of the node
-    of nkEmpty: ## Empty node
+    of nkEmpty:
       discard
-    of nkBool: ## Bool literal
+    of nkBool:
       boolVal*: bool
-    of nkNumber: ## Number literal
-      numberVal*: float
-    of nkString: ## String literal
+    of nkInt:
+      intVal*: int64
+    of nkFloat:
+      floatVal*: float64
+    of nkString:
       stringVal*: string
-    of nkIdent: ## Identifier (may get merged with nkString)
+    of nkIdent:
       ident*: string
-    else: ## Any other branch nodes
+    else:
       children*: seq[Node]
 
-const LeafNodes = {
-  nkEmpty, nkBool, nkNumber, nkString, nkIdent
-}
+const LeafNodes = {nkEmpty..nkIdent}
 
 proc len*(node: Node): int =
   result = node.children.len
@@ -102,10 +110,13 @@ proc hash*(node: Node): Hash =
   case node.kind
   of nkEmpty: discard
   of nkBool: h = h !& hash(node.boolVal)
-  of nkNumber: h = h !& hash(node.numberVal)
+  of nkInt: h = h !& hash(node.intVal)
+  of nkFloat: h = h !& hash(node.floatVal)
   of nkString: h = h !& hash(node.stringVal)
   of nkIdent: h = h !& hash(node.ident)
-  else: h = h !& hash(node.children)
+  else:
+    h = h !& hash(node.len)
+    h = h !& hash(node.children)
   result = h
 
 proc `$`*(node: Node): string =
@@ -115,7 +126,8 @@ proc `$`*(node: Node): string =
   case node.kind
   of nkEmpty: result = ""
   of nkBool: result = $node.boolVal
-  of nkNumber: result = $node.numberVal
+  of nkInt: result = $node.intVal
+  of nkFloat: result = $node.floatVal
   of nkString: result = node.stringVal.escape
   of nkIdent: result = node.ident
   else: discard
@@ -125,7 +137,8 @@ proc treeRepr*(node: Node): string =
   case node.kind
   of nkEmpty: result = "Empty"
   of nkBool: result = "Bool " & $node.boolVal
-  of nkNumber: result = "Number " & $node.numberVal
+  of nkInt: result = "Int " & $node.intVal
+  of nkFloat: result = "Float " & $node.floatVal
   of nkString: result = "String " & escape(node.stringVal)
   of nkIdent: result = "Ident " & node.ident
   else:
@@ -162,7 +175,7 @@ proc render*(node: Node): string =
     if node[0].kind != nkEmpty: result.add(" -> " & node[0].render)
   of nkGenericParams: result = '[' & node.children.join(", ") & ']'
   of nkRecFields: result = node.children.join("\n")
-  of nkBool, nkNumber, nkString, nkIdent: result = $node
+  of nkBool, nkInt, nkFloat, nkString, nkIdent: result = $node
   of nkPrefix: result = node[0].render & node[1].render
   of nkInfix:
     result = node[1].render & ' ' & node[0].render & ' ' & node[2].render
@@ -231,10 +244,15 @@ proc newBoolLit*(val: bool): Node =
   result = newNode(nkBool)
   result.boolVal = val
 
-proc newNumberLit*(val: float): Node =
-  ## Construct a new number literal.
-  result = newNode(nkNumber)
-  result.numberVal = val
+proc newIntLit*(val: int64): Node =
+  ## Construct a new integer literal.
+  result = newNode(nkInt)
+  result.intVal = val
+
+proc newFloatLit*(val: float64): Node =
+  ## Construct a new float literal.
+  result = newNode(nkFloat)
+  result.floatVal = val
 
 proc newStringLit*(val: string): Node =
   ## Construct a new string literal.

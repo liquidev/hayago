@@ -42,16 +42,19 @@ proc disassemble*(chunk: Chunk, files: Table[string, string]): string =
     lineInfo = li
     line.add("  " & alignLeft($opc, 12))
     case opc
-    of opcPushN:
+    of opcPushI:
+      line.add($chunk.getInt(pc + 1))
+      inc(pc, 1 + sizeof(int64))
+    of opcPushF:
       line.add($chunk.getFloat(pc + 1))
-      inc(pc, 1 + sizeof(float))
+      inc(pc, 1 + sizeof(float64))
     of opcPushS, opcPushG, opcPopG:
       line.add(escape(chunk.strings[chunk.getU16(pc + 1)]))
       inc(pc, 3)
     of opcPushNil, opcCallD:
       line.add($chunk.getU16(pc + 1))
       inc(pc, 3)
-    of opcPushL, opcPopL, opcPushF, opcPopF, opcDiscard:
+    of opcPushL, opcPopL, opcGetF, opcSetF, opcDiscard:
       line.add($chunk.getU8(pc + 1))
       inc(pc, 2)
     of opcJumpFwd, opcJumpFwdF, opcJumpFwdT, opcJumpBack:
@@ -67,9 +70,11 @@ proc disassemble*(chunk: Chunk, files: Table[string, string]): string =
       inc(pc, 4)
     of opcPushTrue, opcPushFalse,
        opcInvB, opcEqB,
-       opcNegN, opcAddN, opcSubN, opcMultN, opcDivN,
-       opcEqN, opcLessN, opcGreaterN,
-       opcCallR,
+       opcNegF, opcAddF, opcSubF, opcMultF, opcDivF,
+       opcEqF, opcLessF, opcGreaterF,
+       opcNegI, opcAddI, opcSubI, opcMultI, opcDivI,
+       opcEqI, opcLessI, opcGreaterI,
+       opcCallI,
        opcReturnVal, opcReturnVoid,
        opcNoop, opcHalt: inc(pc, 1)
     if inputLine != "":

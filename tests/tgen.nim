@@ -17,7 +17,7 @@ template benchmark(name, body) =
 
 template compile(input: string) =
   benchmark("compilation"):
-    var scanner = initScanner(input, "testcase.rod")
+    var scanner = initScanner(input, "testcase.hyo")
     let ast = parseScript(scanner)
     var
       main = newChunk()
@@ -99,7 +99,7 @@ suite "compiler":
   test "objects":
     compile("""
       object Hello {
-        x, y: number
+        x, y: int
       }
 
       var instance = Hello(x: 10, y: 20)
@@ -118,7 +118,7 @@ suite "compiler":
       }
     """)
     compile("""
-      proc fac(n: number) -> number {
+      proc fac(n: int) -> int {
         result = 1
         var i = 1
         while i <= n {
@@ -151,7 +151,7 @@ suite "compiler":
         a, b, c: T
       }
 
-      var t = Tri[number](a: 1, b: 2, c: 3)
+      var t = Tri[int](a: 1, b: 2, c: 3)
 
       iterator vertices[T](tri: Tri[T]) -> T {
         yield tri.a
@@ -166,14 +166,14 @@ suite "compiler":
   test "UFCS":
     compile("""
       object ObjWithSetter {
-        fA: number
+        fA: int
       }
 
-      proc a(x: ObjWithSetter) -> number {
+      proc a(x: ObjWithSetter) -> int {
         result = x.fA
       }
 
-      proc `a=`(x: ObjWithSetter, a: number) {
+      proc `a=`(x: ObjWithSetter, a: int) {
         echo("assigning to fA")
         x.fA = a
       }

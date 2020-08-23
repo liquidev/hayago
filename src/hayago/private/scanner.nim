@@ -19,16 +19,23 @@ type
     pos, ln*, col*: int
   TokenKind* = enum
     tokNone = "<invalid>"
-    # Literals
-    tokTrue = "true", tokFalse = "false"
-    tokNumber = "number", tokString = "string"
-    tokOperator = "operator", tokIdent = "identifier"
-    # Punctuation
+
+    # literals
+    tokTrue = "true"
+    tokFalse = "false"
+    tokInt = "int"
+    tokFloat = "float"
+    tokString = "string"
+    tokOperator = "operator"
+    tokIdent = "identifier"
+
+    # punctuation
     tokLPar = "(", tokRPar = ")"
     tokLBrace = "{", tokRBrace = "}"
     tokLBrk = "[", tokRBrk = "]"
     tokDot = ".", tokComma = ",", tokColon = ":"
-    # Keywords
+
+    # keywords
     tokVar = "var", tokLet = "let"
     tokIf = "if", tokElif = "elif", tokElse = "else"
     tokWhile = "while"
@@ -37,13 +44,16 @@ type
     tokYield = "yield"
     tokObject = "object"
     tokProc = "proc", tokIterator = "iterator"
-    # Special
+
+    # special
     tokEnd = "(end of input)"
   Token* = object
     ln*, col*: int
     case kind*: TokenKind
-    of tokNumber:
-      numberVal*: float
+    of tokInt:
+      intVal*: int64
+    of tokFloat:
+      floatVal*: float
     of tokString:
       stringVal*: string
     of tokOperator:
@@ -57,7 +67,8 @@ proc `$`*(token: Token): string =
   result = align($token.ln & ":" & $token.col, 8) & "  " &
            alignLeft($token.kind, 12)
   case token.kind
-  of tokNumber: result.add($token.numberVal)
+  of tokInt: result.add($token.intVal)
+  of tokFloat: result.add($token.floatVal)
   of tokOperator: result.add(token.operator & " (prec: " & $token.prec & ")")
   of tokString: result.add(escape(token.stringVal))
   of tokIdent: result.add(token.ident)
@@ -189,25 +200,31 @@ proc next*(scan: var Scanner): Token =
     else:
       case operator
       of ".": result = Token(kind: tokDot)
-      else: scan.error("Unknown operator: '" & operator & "'")
+      else: scan.error(ErrUnknownOperator % operator)
   of Digits:
-    var number = ""
+    var
+      number = ""
+      isFloat = false
     while scan.current in Digits:
       number.add(scan.current)
       scan.advance()
     if scan.current == '.' and scan.get(2) != "..":
+      isFloat = true
       number.add(scan.current)
       scan.advance()
       while scan.current in Digits:
         number.add(scan.current)
         scan.advance()
-    result = Token(kind: tokNumber, numberVal: parseFloat(number))
+    if isFloat:
+      result = Token(kind: tokFloat, floatVal: parseFloat(number))
+    else:
+      result = Token(kind: tokInt, intVal: parseInt(number))
   of '"':
     scan.advance()
     var str = ""
     while scan.current != '"':
       if scan.current == '\x00':
-        scan.error("Unterminated string literal")
+        scan.error(ErrUntermStringLit)
       str.add(scan.current)
       scan.advance()
     scan.advance()
@@ -231,13 +248,13 @@ proc next*(scan: var Scanner): Token =
     var ident = ""
     while scan.current != '`':
       if scan.current == '\x00':
-        scan.error("Unterminated stropped identifier")
+        scan.error(ErrUntermStroppedIdent)
       if scan.current != ' ':
         ident.add(scan.current)
       scan.advance()
     scan.advance()
     result = Token(kind: tokIdent, ident: ident)
-  else: scan.error("Unexpected character: '" & scan.current & "'")
+  else: scan.error(ErrUnexpectedChar % $scan.current)
   result.ln = ln
   result.col = col
 
@@ -256,14 +273,14 @@ proc expect*(scan: var Scanner, kind: TokenKind,
   result = scan.next()
   if result.kind != kind:
     if customError.len == 0:
-      scan.error($kind & " expected, got " & $result.kind)
+      scan.error(ErrXExpectedGotY % [$kind, $result.kind])
     else:
       scan.error(customError)
 
 proc expectOp*(scan: var Scanner, op: string) =
   let tok = scan.next()
   if tok.kind != tokOperator or tok.operator != op:
-    scan.error('\'' & op & "' expected, got " & $tok.kind)
+    scan.error(ErrOpExpectedGotY % [op, $tok.kind])
 
 proc pattern*(scan: var Scanner, patt: openarray[TokenKind]): bool =
   let

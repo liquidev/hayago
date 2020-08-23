@@ -16,32 +16,45 @@ const
 const
   tyNil* = 0
   tyBool* = 1
-  tyNumber* = 2
-  tyString* = 3
-  tyFirstObject* = 4
+  tyInt* = 2
+  tyFloat* = 3
+  tyString* = 4
+  tyFirstObject* = 10
 
 type
-  TypeId* = range[0..32766] # Max amount of case object branches
-  Object* = ref object ## A hayago object.
+  TypeId* = range[0..32766]  # max amount of case object branches
+
+  Object* = ref object
+    ## A hayago object.
     case isForeign: bool
     of true: data*: pointer
     of false: fields*: seq[Value]
-  Value* = object ## A hayago value.
-    case typeId*: TypeId ## The type ID, used for dynamic dispatch.
+
+  Value* = object
+    ## A hayago value.
+    case typeId*: TypeId  ## the type ID, used for dynamic dispatch
     of tyBool: boolVal*: bool
-    of tyNumber: numberVal*: float
+    of tyInt: intVal*: int64
+    of tyFloat: floatVal*: float64
     of tyString: stringVal*: ref string
     else: objectVal*: Object
-  Stack* = seq[Value] ## A runtime stack of values, used in the VM.
-  StackView* = ptr UncheckedArray[Value] ## An unsafe view into a Stack.
-  ForeignProc* = proc (args: StackView): Value ## A foreign proc.
+
+  Stack* = seq[Value]
+    ## A runtime stack of values, used in the VM.
+  StackView* = ptr UncheckedArray[Value]
+    ## An unsafe view into a Stack.
+
+  ForeignProc* = proc (args: StackView): Value
+    ## A foreign proc.
 
 proc `$`*(value: Value): string =
+  ## Returns a value's string representation.
   result =
     case value.typeId
     of tyNil: "nil"
     of tyBool: $value.boolVal
-    of tyNumber: $value.numberVal
+    of tyInt: $value.intVal
+    of tyFloat: $value.floatVal
     of tyString: escape($value.stringVal[])
     else: "<object>"
 
@@ -49,9 +62,13 @@ proc initValue*(value: bool): Value =
   ## Initializes a bool value.
   result = Value(typeId: tyBool, boolVal: value)
 
-proc initValue*(value: float): Value =
-  ## Initializes a number value.
-  result = Value(typeId: tyNumber, numberVal: value)
+proc initValue*(value: int64): Value =
+  ## Initializes a float value.
+  result = Value(typeId: tyInt, intVal: value)
+
+proc initValue*(value: float64): Value =
+  ## Initializes a float value.
+  result = Value(typeId: tyFloat, floatVal: value)
 
 proc initValue*(value: string): Value =
   ## Initializes a string value.
@@ -79,10 +96,12 @@ proc initValue*[T: tuple | object | ref](id: TypeId, value: T): Value =
     GC_ref(value)
     result.objectVal.data = cast[pointer](value)
 
+proc foreign*(value: var Value, T: typedesc): T =
+  result = cast[var T](value.objectVal.data)
+
 proc foreign*(value: Value, T: typedesc): T =
   ## Get an object value. This is a *mostly* safe operation, but attempting to
-  ## get a foreign type different from the value's is a guaranteed segfault. In
-  ## most of the cases.
+  ## get a foreign type different from the value's is undefined behavior.
   result = cast[ptr T](value.objectVal.data)[]
 
 const nilObject* = -1 ## The field count used for initializing a nil object.

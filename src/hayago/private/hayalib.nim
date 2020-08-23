@@ -26,7 +26,7 @@ proc compileHaya*(script: Script, module: Module, filename, code: string) =
 
 const
   HayalibSystemSrc* = """
-    iterator `..`(min, max: number) -> number {
+    iterator `..`(min, max: int) -> int {
       var i = min
       while i <= max {
         yield i
@@ -51,9 +51,9 @@ proc modSystem*(script: Script): Module =
     proc (args: StackView): Value =
       result = initValue($args[0].boolVal))
 
-  script.addProc(result, "$", {"x": "number"}, "string",
+  script.addProc(result, "$", {"x": "int"}, "string",
     proc (args: StackView): Value =
-      result = initValue($args[0].numberVal))
+      result = initValue($args[0].intVal))
 
   script.addProc(result, "$", {"x": "string"}, "string",
     proc (args: StackView): Value =

@@ -155,4 +155,26 @@ suite "VM":
         echo($x)
       }
     """)
+  test "UFCS":
+    run("""
+      object Stuff {
+        fThing: number
+      }
 
+      proc thing(s: Stuff) -> number {
+        result = s.fThing
+      }
+
+      proc `thing=`(s: Stuff, n: number) {
+        s.fThing = n
+      }
+
+      proc sayThing(s: Stuff) {
+        echo($s.thing)
+      }
+
+      var stuff = Stuff(fThing: 1)
+      stuff.sayThing()
+      stuff.thing = 5
+      stuff.sayThing()
+    """)

@@ -15,16 +15,19 @@ import parser
 import value
 
 type
-  Context* = distinct int  ## a scope context
+  Context* = distinct uint16
+    ## A scope context.
 
-  Scope* = ref object of RootObj  ## a local scope
+  Scope* = ref object of RootObj
+    ## A local scope.
     syms*: Table[string, Sym]
-    context*: Context      ## the scope's context. this is used for scope hygiene
-  Module* = ref object of Scope  ## a module representing the global scope of a
-                                 ## single source file
+    context*: Context  ## the scope's context. this is used for scope hygiene
+  Module* = ref object of Scope
+    ## A module representing the global scope of a single source file.
     name*: string  ## the name of the module
 
-  SymKind* = enum  ## the kind of a symbol
+  SymKind* = enum
+    ## The kind of a symbol.
     skVar = "var"
     skLet = "let"
     skType = "type"
@@ -34,20 +37,23 @@ type
     skChoice = "(...)"  ## an overloaded symbol, stores many symbols with \
                         ## the same name
 
-  TypeKind* = enum  ## the kind of a type
+  TypeKind* = enum
+    ## The kind of a type.
     # meta-types
     tkVoid = "void"      # matches no types
     tkAny = "any"        # matches any and all types
 
     # concrete types
     tkBool = "bool"
-    tkNumber = "number"  # float64
+    tkInt = "int"        # int64
+    tkFloat = "float"    # float64
     tkString = "string"  # ref string
 
     # user-defined types
     tkObject = "object"
 
-  Sym* = ref object  ## a symbol. this represents an ident that can be looked up
+  Sym* = ref object
+    ## A symbol. This represents an ident that can be looked up.
     name*: Node  ## the name of the symbol
     impl*: Node  ## the implementation of the symbol. may be ``nil`` if the \
                 ## symbol is generated
@@ -87,7 +93,8 @@ type
     name: Node  # the name of the field
     ty: Sym     # the type of the field
 
-  ProcParam* = tuple ## A single param of a proc.
+  ProcParam* = tuple
+    ## A single param of a proc.
     name: Node
     ty: Sym
     # TODO: default param values

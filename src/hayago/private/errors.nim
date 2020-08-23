@@ -8,6 +8,28 @@
 
 const
   ErrorFmt* = "$1($2, $3): $4"
+
+  # lex errors
+  ErrUnknownOperator* = "unknown operator: '$1'"
+  ErrUntermStringLit* = "unterminated string literal"
+  ErrUntermStroppedIdent* = "unterminated stropped identifier"
+  ErrUnexpectedChar* = "unexpected character: '$1'"
+  ErrXExpectedGotY* = "$1 expected, got $2"
+  ErrOpExpectedGotY* = "'$1' expected, got $2"
+
+  # parse errors
+  ErrUnmatchedParen* = "right paren ')' expected"
+  ErrGenericIllegalInProcType* = "generic params are not allowed in proc types"
+  ErrAssignOpExpected* = "assignment operator '=' expected, got '$1'"
+  ErrMissingToken* = "missing '$1'"
+  ErrXExpected* = [
+    1: "'$#' expected",
+    2: "'$#' or '$#' expected",
+  ]
+  ErrProcNameExpected* = "proc name expected"
+  ErrProcParamsExpected* = "proc params expected"
+
+  # compile errors
   ErrShadowResult* = "variable shadows implicit 'result' variable"
   ErrLocalRedeclaration* = "'$1' is already declared in this scope"
   ErrGlobalRedeclaration* = "'$1' is already declared"

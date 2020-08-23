@@ -7,10 +7,12 @@
 # Parser procs (``parse*``) are annotated with pseudo-npeg rules.
 
 import std/macros
-import std/strformat
+import std/strutils
 
 import ast
+import errors
 import scanner
+import macros
 
 template ruleGuard(body) =
   ## Helper used by {.rule.} to update line info appropriately for nodes.
@@ -53,7 +55,7 @@ proc parseParExpr(): Node {.rule.} =
   # parExpr <- '(' expr ')'
   result = parseExpr(scan)
   if scan.next().kind != tokRPar:
-    scan.error("Right paren ')' expected")
+    scan.error(ErrUnmatchedParen)
 
 proc parseBlock(): Node {.rule.}
 
@@ -86,7 +88,7 @@ proc parseType(): Node {.rule.} =
     var name, genericParams, formalParams: Node
     parseProcHead(scan, anon = true, name, genericParams, formalParams)
     if genericParams.kind != nkEmpty:
-      scan.error("Generic params are not allowed in proc types")
+      scan.error(ErrGenericIllegalInProcType)
     result = newTree(nkProcTy, formalParams)
   else:
     result = parseExpr(scan, prec = 9)
@@ -112,7 +114,7 @@ proc parseIdentDefs(): Node {.rule.} =
       break
     else: break
   if delim.kind == tokOperator and delim.operator != "=":
-    scan.error(fmt"Assignment operator '=' expected, got '{delim.ident}'")
+    scan.error(ErrAssignOpExpected % delim.operator)
   var
     ty = newEmpty()
     value = newEmpty()
@@ -139,7 +141,7 @@ proc parseCommaList(scan: var Scanner, start, term: static TokenKind,
       return false
   while true:
     if scan.atEnd:
-      scan.error(fmt"Missing '{term}'")
+      scan.error(ErrMissingToken % $term)
     elif scan.peek().kind == term:
       discard scan.next()
       break
@@ -148,7 +150,7 @@ proc parseCommaList(scan: var Scanner, start, term: static TokenKind,
     of tokComma: continue
     of term: break
     else:
-      scan.error(fmt"',' or '{term}' expected")
+      scan.error(ErrXExpected[2] % [",", $term])
   result = true
 
 proc parseProcHead(anon: bool, name,
@@ -157,7 +159,7 @@ proc parseProcHead(anon: bool, name,
   # anonProcHead <- commaList('(', ')', identDefs) -> type
   # procHead <- Ident commaList('(', ')', identDefs) -> type
   if not anon:
-    let ident = scan.expect(tokIdent, "Proc name expected")
+    let ident = scan.expect(tokIdent, ErrProcNameExpected)
     name = newIdent(ident.ident)
   else:
     name = newEmpty()
@@ -172,7 +174,7 @@ proc parseProcHead(anon: bool, name,
   if scan.peek().kind == tokLPar:
     var params: seq[Node]
     if not parseCommaList(scan, tokLPar, tokRPar, params, parseIdentDefs):
-      scan.error("Proc params expected")
+      scan.error(ErrProcParamsExpected)
     formalParams.add(params)
   if scan.peek().kind == tokOperator and scan.peek().operator == "->":
     discard scan.next()
@@ -194,7 +196,8 @@ proc parsePrefix(token: Token): Node {.rule.} =
   case token.kind
   of tokTrue: result = newBoolLit(true)
   of tokFalse: result = newBoolLit(false)
-  of tokNumber: result = newNumberLit(token.numberVal)
+  of tokInt: result = newIntLit(token.intVal)
+  of tokFloat: result = newFloatLit(token.floatVal)
   of tokString: result = newStringLit(token.stringVal)
   of tokIdent: result = newIdent(token.ident)
   of tokOperator: result = newTree(nkPrefix, newIdent(token.operator),

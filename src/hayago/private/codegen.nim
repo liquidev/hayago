@@ -181,12 +181,14 @@ proc newProc*(script: Script, name, impl: Node,
   sym.procReturnTy = returnTy
   result = (sym, theProc)
 
+const currentContext = Context(high(uint16))
+
 proc pushFlowBlock(gen: var CodeGen, kind: FlowBlockKind,
-                   context = Context(-1)) =
+                   context = currentContext) =
   ## Push a new flow block. This creates a new scope for the flow block.
   let fblock = FlowBlock(kind: kind,
                          bottomScope: gen.scopes.len)
-  if context == Context(-1):
+  if context == currentContext:
     fblock.context = gen.context
   else:
     fblock.context = context
@@ -447,9 +449,12 @@ proc pushDefault(gen: var CodeGen, ty: Sym) =
   case ty.tyKind
   of tkBool:
     gen.chunk.emit(opcPushFalse)
-  of tkNumber:
-    gen.chunk.emit(opcPushN)
-    gen.chunk.emit(0.0)
+  of tkInt:
+    gen.chunk.emit(opcPushI)
+    gen.chunk.emit(0'i64)
+  of tkFloat:
+    gen.chunk.emit(opcPushF)
+    gen.chunk.emit(0'f64)
   of tkString:
     gen.chunk.emit(opcPushS)
     gen.chunk.emit(gen.chunk.getString(""))
@@ -468,11 +473,16 @@ proc pushConst(node: Node): Sym {.codegen.} =
     if node.boolVal == true: gen.chunk.emit(opcPushTrue)
     else: gen.chunk.emit(opcPushFalse)
     result = gen.module.sym"bool"
-  of nkNumber:
-    # numbers - use pushN with a number Value
-    gen.chunk.emit(opcPushN)
-    gen.chunk.emit(node.numberVal)
-    result = gen.module.sym"number"
+  of nkInt:
+    # floats - use pushF with a float Value
+    gen.chunk.emit(opcPushI)
+    gen.chunk.emit(node.intVal)
+    result = gen.module.sym"int"
+  of nkFloat:
+    # floats - use pushF with a float Value
+    gen.chunk.emit(opcPushF)
+    gen.chunk.emit(node.floatVal)
+    result = gen.module.sym"float"
   of nkString:
     # strings - use pushS with a string ID
     gen.chunk.emit(opcPushS)
@@ -587,11 +597,12 @@ proc prefix(node: Node): Sym {.codegen.} =
 
   var noBuiltin = false # is no builtin operator available?
   let ty = gen.genExpr(node[1]) # generate the operand's code
-  if ty == gen.module.sym"number":
+  if ty in [gen.module.sym"int", gen.module.sym"float"]:
     # number operators
+    let isFloat = ty == gen.module.sym"float"
     case node[0].ident
     of "+": discard # + is a noop
-    of "-": gen.chunk.emit(opcNegN)
+    of "-": gen.chunk.emit(if isFloat: opcNegF else: opcNegI)
     else: noBuiltin = true # non-builtin operator
     result = ty
   elif ty == gen.module.sym"bool":
@@ -617,28 +628,38 @@ proc infix(node: Node): Sym {.codegen.} =
     let
       aTy = gen.genExpr(node[1]) # generate the left operand's code
       bTy = gen.genExpr(node[2]) # generate the right operand's code
-    if aTy == bTy and aTy == gen.module.sym"number":
+    if aTy == bTy and aTy in [gen.module.sym"int", gen.module.sym"float"]:
       # number operators
+      let areFloats = aTy == gen.module.sym"float"
       case node[0].ident
       # arithmetic
-      of "+": gen.chunk.emit(opcAddN)
-      of "-": gen.chunk.emit(opcSubN)
-      of "*": gen.chunk.emit(opcMultN)
-      of "/": gen.chunk.emit(opcDivN)
+      of "+": gen.chunk.emit(if areFloats: opcAddF else: opcAddI)
+      of "-": gen.chunk.emit(if areFloats: opcSubF else: opcSubI)
+      of "*": gen.chunk.emit(if areFloats: opcMultF else: opcMultI)
+      of "/": gen.chunk.emit(if areFloats: opcDivF else: opcDivI)
       # relational
-      of "==": gen.chunk.emit(opcEqN)
-      of "!=": gen.chunk.emit(opcEqN); gen.chunk.emit(opcInvB)
-      of "<": gen.chunk.emit(opcLessN)
-      of "<=": gen.chunk.emit(opcGreaterN); gen.chunk.emit(opcInvB)
-      of ">": gen.chunk.emit(opcGreaterN)
-      of ">=": gen.chunk.emit(opcLessN); gen.chunk.emit(opcInvB)
+      of "==": gen.chunk.emit(if areFloats: opcEqF else: opcEqI)
+      of "!=":
+        gen.chunk.emit(if areFloats: opcEqF else: opcEqI)
+        gen.chunk.emit(opcInvB)
+      of "<": gen.chunk.emit(if areFloats: opcLessF else: opcLessI)
+      of "<=":
+        gen.chunk.emit(if areFloats: opcGreaterF else: opcGreaterI)
+        gen.chunk.emit(opcInvB)
+      of ">": gen.chunk.emit(if areFloats: opcGreaterF else: opcGreaterI)
+      of ">=":
+        gen.chunk.emit(if areFloats: opcLessF else: opcLessI)
+        gen.chunk.emit(opcInvB)
       else: noBuiltin = true # unknown operator
       result =
         case node[0].ident
         # arithmetic operators return numbers
-        of "+", "-", "*", "/": gen.module.sym"number"
+        of "+", "-", "*", "/":
+          if areFloats: gen.module.sym"float"
+          else: gen.module.sym"int"
         # relational operators return bools
-        of "==", "!=", "<", "<=", ">", ">=": gen.module.sym"bool"
+        of "==", "!=", "<", "<=", ">", ">=":
+          gen.module.sym"bool"
         else: nil # type mismatch; we don't care
     elif aTy == bTy and aTy == gen.module.sym"bool":
       # bool operators
@@ -683,7 +704,7 @@ proc infix(node: Node): Sym {.codegen.} =
           let field = typeSym.objectFields[fieldName]
           if valTy != field.ty:
             node[2].error(ErrTypeMismatch % [$field.ty.name, $valTy.name])
-          gen.chunk.emit(opcPopF)
+          gen.chunk.emit(opcSetF)
           gen.chunk.emit(field.id.uint8)
         else:
           # otherwise, try to find a matching setter
@@ -1016,7 +1037,7 @@ proc genProc(node: Node, isInstantiation = false): Sym {.codegen.} =
 proc genExpr(node: Node): Sym {.codegen.} =
   ## Generates code for an expression.
   case node.kind
-  of nkBool, nkNumber, nkString:  # constants
+  of nkBool, nkInt, nkFloat, nkString:  # constants
     result = gen.pushConst(node)
   of nkIdent:                     # variables
     var varSym = gen.lookup(node)
@@ -1368,7 +1389,7 @@ proc genScript*(node: Node) {.codegen.} =
 
 proc addProc*(script: Script, module: Module, name: string,
               params: openarray[(string, string)], returnTy: string,
-              impl: ForeignProc = nil): Proc {.discardable.} =
+              impl: ForeignProc = nil) =
   ## Add a foreign procedure to the given module, belonging to the given script.
   var nodeParams: seq[ProcParam]
   for param in params:
@@ -1393,21 +1414,25 @@ proc initSystemOps*(script: Script, module: Module) =
   ## Add builtin operations into the module.
   ## This should only ever be called when creating the ``system`` module.
 
-  # unary operators
+  # bool operators
   script.addProc(module, "not", {"x": "bool"}, "bool")
-  script.addProc(module, "+", {"x": "number"}, "number")
-  script.addProc(module, "-", {"x": "number"}, "number")
-
-  # binary operators
-  script.addProc(module, "+", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "-", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "*", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "/", {"a": "number", "b": "number"}, "number")
-  script.addProc(module, "==", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, "!=", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, "<", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, "<=", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, ">", {"a": "number", "b": "number"}, "bool")
-  script.addProc(module, ">=", {"a": "number", "b": "number"}, "bool")
   script.addProc(module, "==", {"a": "bool", "b": "bool"}, "bool")
   script.addProc(module, "!=", {"a": "bool", "b": "bool"}, "bool")
+
+  # number type operators
+
+  for T in ["int", "float"]:
+    # XXX: this is perhaps a bit inefficient, optimizing this could help
+    script.addProc(module, "+", {"x": T}, T)
+    script.addProc(module, "-", {"x": T}, T)
+
+    script.addProc(module, "+", {"a": T, "b": T}, T)
+    script.addProc(module, "-", {"a": T, "b": T}, T)
+    script.addProc(module, "*", {"a": T, "b": T}, T)
+    script.addProc(module, "/", {"a": T, "b": T}, T)
+    script.addProc(module, "==", {"a": T, "b": T}, "bool")
+    script.addProc(module, "!=", {"a": T, "b": T}, "bool")
+    script.addProc(module, "<", {"a": T, "b": T}, "bool")
+    script.addProc(module, "<=", {"a": T, "b": T}, "bool")
+    script.addProc(module, ">", {"a": T, "b": T}, "bool")
+    script.addProc(module, ">=", {"a": T, "b": T}, "bool")
