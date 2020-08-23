@@ -695,7 +695,7 @@ proc infix(node: Node): Sym {.codegen.} =
       else: node.error(ErrInvalidAssignment % $node)
       # assignment doesn't return anything (in most cases, setters can be
       # declared to return a value, albeit it's not that useful)
-      if result != nil:
+      if result == nil:
         result = gen.module.sym"void"
     # ``or`` and ``and`` are special, because they're short-circuiting.
     # that's why they need a little more special care.

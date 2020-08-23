@@ -89,7 +89,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       stack.push(initValue(expr))
     template binaryInpl(someVal, op) =
       let b = stack.pop()
-      op(stack[stack.len - 1].someVal, b.someVal)
+      op(stack[^1].someVal, b.someVal)
 
     template storeFrame() =
       when defined(hayaVmWritePcFlow):
