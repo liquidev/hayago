@@ -55,45 +55,9 @@ echo(message)
 
 ## Roadmap
 
-hayago is not finished yet. The following checklist represents the current state
-of affairs when it comes to features:
+You can find the roadmap in the [repository's readme][readme].
 
-- hayago 0.1 (currently worked on)
-  - [x] variables
-  - [x] flow control (`if`, `while`, `for`)
-  - [x] objects
-    - [ ] inheritance
-    - [ ] non-`ref` and `ref` objects
-  - [x] procedures
-    - [ ] closures
-    - [ ] UFCS
-  - [x] iterators
-  - [x] generics
-    - generic type inference
-      - [x] in procedure calls
-      - [ ] in object constructors
-  - [ ] modules and `import`
-  - [ ] embedding
-    - [ ] low-level, unsafe functionality
-    - [ ] high-level macro-based API
-  - [ ] standard library
-    - [ ] math
-    - [ ] string manipulation
-    - [ ] seq manipulation
-    - …
-- hayago 0.2
-  - [ ] coroutines
-  - [ ] error handling with a `try…except…finally`-like system
-- hayago 0.3
-  - [ ] tuples
-  - [ ] multiple `for` loop variables
-
-There is no hard deadline for any of the listed features. This checklist is
-supposed to show how much of the language is complete, but it probably misses
-some points.
-
-If you want to propose a new feature, feel free to open an issue. I'm open to
-suggestions.
+  [readme]: https://github.com/liquid600pgm/hayago
 
 ## Didn't this use to be called `rod`?
 
