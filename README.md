@@ -67,7 +67,7 @@ of affairs when it comes to features:
     - [ ] non-`ref` and `ref` objects
   - [x] procedures
     - [ ] closures
-    - [ ] UFCS
+    - [x] UFCS
   - [x] iterators
   - [x] generics
     - generic type inference
