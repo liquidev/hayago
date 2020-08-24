@@ -142,37 +142,41 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       let id = pc.read[:uint16](0).TypeId
       stack.push(initObject(id, nilObject))
       inc(pc, sizeof(uint16))
-    of opcPushN: # push number
-      let num = pc.read[:float](0)
-      stack.push(initValue(num))
+    of opcPushI:  # push int
+      let i = pc.read[:int64](0)
+      stack.push(initValue(i))
       inc(pc, sizeof(float))
-    of opcPushS: # push string
+    of opcPushF:  # push float
+      let f = pc.read[:float64](0)
+      stack.push(initValue(f))
+      inc(pc, sizeof(float))
+    of opcPushS:  # push string
       let id = pc.read[:uint16](0)
       stack.push(initValue(chunk.strings[id]))
       inc(pc, sizeof(uint16))
 
     # variables
-    of opcPushG: # push global
+    of opcPushG:  # push global
       let
         id = pc.read[:uint16](0)
         name = chunk.strings[id]
       stack.push(vm.globals[name])
       inc(pc, sizeof(uint16))
-    of opcPopG: # pop to global
+    of opcPopG:  # pop to global
       let
         id = pc.read[:uint16](0)
         name = chunk.strings[id]
       vm.globals[name] = stack.pop()
       inc(pc, sizeof(uint16))
-    of opcPushL: # push local
+    of opcPushL:  # push local
       stack.push(stack[stackBottom + pc[0].int])
       inc(pc, sizeof(uint8))
-    of opcPopL: # pop to local
+    of opcPopL:  # pop to local
       stack[stackBottom + pc[0].int] = stack.pop()
       inc(pc, sizeof(uint8))
 
     # objects
-    of opcConstrObj: # construct object
+    of opcConstrObj:  # construct object
       let
         id = pc.read[:uint16](0)
         fieldCount = pc[sizeof(uint16)].int
@@ -183,13 +187,13 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
       stack.setLen(stack.len - fieldCount)
       stack.push(obj)
       inc(pc, sizeof(uint16) + sizeof(uint8))
-    of opcPushF: # push field
+    of opcGetF:  # push field
       let
         field = pc[0]
         obj = stack.pop()
       stack.push(obj.objectVal.fields[field])
       inc(pc, sizeof(uint8))
-    of opcPopF: # pop to field
+    of opcSetF:  # pop to field
       let
         field = pc[0]
         value = stack.pop()
@@ -207,36 +211,55 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
     # Arithmetic
     #--
 
-    of opcNegN: # negate a number
-      unary(-a.numberVal)
-    of opcAddN: # add two numbers
-      binaryInpl(numberVal, `+=`)
-    of opcSubN: # subtract two numbers
-      binaryInpl(numberVal, `-=`)
-    of opcMultN: # multiply two numbers
-      binaryInpl(numberVal, `*=`)
-    of opcDivN: # divide two numbers
-      binaryInpl(numberVal, `/=`)
+    of opcNegI:  # negate a int
+      unary(-a.intVal)
+    of opcAddI:  # add two ints
+      binaryInpl(intVal, `+=`)
+    of opcSubI:  # subtract two ints
+      binaryInpl(intVal, `-=`)
+    of opcMultI:  # multiply two ints
+      binaryInpl(intVal, `*=`)
+    of opcDivI:  # divide two ints
+      let
+        b = stack.pop()
+        a = stack.pop()
+      stack.add(initValue(a.intVal div b.intVal))
+    of opcNegF:  # negate a float
+      unary(-a.floatVal)
+    of opcAddF:  # add two floats
+      binaryInpl(floatVal, `+=`)
+    of opcSubF:  # subtract two floats
+      binaryInpl(floatVal, `-=`)
+    of opcMultF:  # multiply two floats
+      binaryInpl(floatVal, `*=`)
+    of opcDivF:  # divide two floats
+      binaryInpl(floatVal, `/=`)
 
     #--
     # Logic
     #--
 
-    of opcInvB: # negate a bool
+    of opcInvB:  # negate a bool
       unary(not a.boolVal)
 
     #--
     # Relational
     #--
 
-    of opcEqB: # bools equal
+    of opcEqB:  # bools equal
       binary(a.boolVal == b.boolVal)
-    of opcEqN: # numbers equal
-      binary(a.numberVal == b.numberVal)
-    of opcLessN: # number less than a number
-      binary(a.numberVal < b.numberVal)
-    of opcGreaterN: # number less than or equal to number
-      binary(a.numberVal > b.numberVal)
+    of opcEqI:  # ints equal
+      binary(a.intVal == b.intVal)
+    of opcLessI:  # int less than a int
+      binary(a.intVal < b.intVal)
+    of opcGreaterI:  # int less than or equal to int
+      binary(a.intVal > b.intVal)
+    of opcEqF:  # floats equal
+      binary(a.floatVal == b.floatVal)
+    of opcLessF:  # float less than a float
+      binary(a.floatVal < b.floatVal)
+    of opcGreaterF:  # float less than or equal to float
+      binary(a.floatVal > b.floatVal)
 
     #--
     # Execution
@@ -267,7 +290,7 @@ proc interpret*(vm: Vm, script: Script, startChunk: Chunk): Value =
         theProc = script.procs[id]
       inc(pc, sizeof(uint16))
       doCall(theProc)
-    of opcCallR: discard
+    of opcCallI: discard
     of opcReturnVal:
       let retVal = stack.pop()
       restoreFrame()

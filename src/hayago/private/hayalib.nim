@@ -55,6 +55,10 @@ proc modSystem*(script: Script): Module =
     proc (args: StackView): Value =
       result = initValue($args[0].intVal))
 
+  script.addProc(result, "$", {"x": "float"}, "string",
+    proc (args: StackView): Value =
+      result = initValue($args[0].floatVal))
+
   script.addProc(result, "$", {"x": "string"}, "string",
     proc (args: StackView): Value =
       result = initValue(args[0].stringVal[]))

@@ -474,7 +474,7 @@ proc pushConst(node: Node): Sym {.codegen.} =
     else: gen.chunk.emit(opcPushFalse)
     result = gen.module.sym"bool"
   of nkInt:
-    # floats - use pushF with a float Value
+    # ints - use pushI with an int Value
     gen.chunk.emit(opcPushI)
     gen.chunk.emit(node.intVal)
     result = gen.module.sym"int"
@@ -565,7 +565,6 @@ proc resolveGenerics*(gen: var CodeGen, callable: var Sym,
         else:
           errorNode.error(ErrCouldNotInferGeneric % errorNode.render)
           nil
-    echo genericArgs
     callable = gen.instantiate(callable, genericArgs, errorNode)
 
 proc callProc(procSym: Sym, argTypes: seq[Sym],
@@ -851,10 +850,10 @@ proc genGetField(node: Node): Sym {.codegen.} =
   # only objects have fields. we also check if the given object *does* have the
   # field in question, and generate an error if not
   if typeSym.tyKind == tkObject and fieldName in typeSym.objectFields:
-    # we use the pushF opcode to push fields onto the stack.
+    # we use the getF opcode to push fields onto the stack.
     let field = typeSym.objectFields[fieldName]
     result = field.ty
-    gen.chunk.emit(opcPushF)
+    gen.chunk.emit(opcGetF)
     gen.chunk.emit(field.id.uint8)
   else:
     # if the field doesn't actually exist, we find an appropriate proc that will
@@ -1290,7 +1289,6 @@ proc genIterator(node: Node, isInstantiation = false): Sym {.codegen.} =
   let
     formalParams = node[2]
     params = gen.collectParams(formalParams)
-  echo params
 
   # get the yield type
   if formalParams[0].kind == nkEmpty:

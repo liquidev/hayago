@@ -94,21 +94,21 @@ suite "VM":
   test "objects":
     run("""
       object Vector {
-        x, y: number
+        x, y: float
       }
 
-      var a = Vector(x: 1, y: 2)
+      var a = Vector(x: 1.0, y: 2.0)
       echo($a.x)
       echo($a.y)
 
-      a.x = 3
-      a.y = 4
+      a.x = 3.0
+      a.y = 4.0
       echo($a.x)
       echo($a.y)
     """)
   test "procedures":
     run("""
-      proc fac(n: number) -> number {
+      proc fac(n: int) -> int {
         result = 1
         var i = 1
         while i <= n {
@@ -120,7 +120,7 @@ suite "VM":
       echo($fac(10))
     """)
     run("""
-      proc printNums(x, max: number) {
+      proc printNums(x, max: int) {
         echo($x)
         if x < max { printNums(x + 1, max) }
       }
@@ -158,14 +158,14 @@ suite "VM":
   test "UFCS":
     run("""
       object Stuff {
-        fThing: number
+        fThing: int
       }
 
-      proc thing(s: Stuff) -> number {
+      proc thing(s: Stuff) -> int {
         result = s.fThing
       }
 
-      proc `thing=`(s: Stuff, n: number) {
+      proc `thing=`(s: Stuff, n: int) {
         s.fThing = n
       }
 
