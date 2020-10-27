@@ -11,7 +11,6 @@ import std/strutils
 import std/tables
 
 import ast
-import parser
 import value
 
 type
@@ -56,7 +55,7 @@ type
     ## A symbol. This represents an ident that can be looked up.
     name*: Node  ## the name of the symbol
     impl*: Node  ## the implementation of the symbol. may be ``nil`` if the \
-                ## symbol is generated
+                 ## symbol is generated
     case kind*: SymKind
     of skVar, skLet:
       varTy*: Sym        ## the type of the variable
@@ -73,6 +72,8 @@ type
       procId*: uint16              ## the unique number of the proc
       procParams*: seq[ProcParam]  ## the proc's parameters
       procReturnTy*: Sym           ## the return type of the proc
+      procMagic*: BaseMagic        ## if not nil, the procedure's \
+                                   ## magic implementation
     of skIterator:
       iterParams*: seq[ProcParam]  ## the iterator's parameters
       iterYieldTy*: Sym            ## the yield type of the iterator
@@ -98,6 +99,10 @@ type
     name: Node
     ty: Sym
     # TODO: default param values
+
+  BaseMagic* = ref object of RootObj
+    isTyped*: bool
+
   HayaCompileError* = object of ValueError
     file*: string
     ln*, col*: int
