@@ -1,0 +1,301 @@
+#--
+# the hayago scripting language
+# copyright (C) iLiquid, 2019-2020
+# licensed under the MIT license
+#--
+
+import std/parseutils
+import std/strutils
+import std/tables
+
+import errors
+
+type
+  HayaParseError* = object of ValueError
+    file*: string
+    ln*, col*: int
+  Scanner* = object
+    file*, input: string
+    pos, ln*, col*: int
+  TokenKind* = enum
+    tokNone = "<invalid>"
+
+    # literals
+    tokTrue = "true"
+    tokFalse = "false"
+    tokInt = "int"
+    tokFloat = "float"
+    tokString = "string"
+    tokOperator = "operator"
+    tokIdent = "identifier"
+
+    # punctuation
+    tokLPar = "(", tokRPar = ")"
+    tokLBrace = "{", tokRBrace = "}"
+    tokLBrk = "[", tokRBrk = "]"
+    tokDot = ".", tokComma = ",", tokColon = ":"
+
+    # keywords
+    tokVar = "var", tokLet = "let"
+    tokIf = "if", tokElif = "elif", tokElse = "else"
+    tokWhile = "while"
+    tokFor = "for", tokIn = "in"
+    tokBreak = "break", tokContinue = "continue", tokReturn = "return"
+    tokYield = "yield"
+    tokObject = "object"
+    tokProc = "proc", tokIterator = "iterator"
+
+    # special
+    tokEnd = "(end of input)"
+  Token* = object
+    ln*, col*: int
+    case kind*: TokenKind
+    of tokInt:
+      intVal*: int64
+    of tokFloat:
+      floatVal*: float
+    of tokString:
+      stringVal*: string
+    of tokOperator:
+      operator*: string
+      prec*: int
+    of tokIdent:
+      ident*: string
+    else: discard
+
+proc `$`*(token: Token): string =
+  result = align($token.ln & ":" & $token.col, 8) & "  " &
+           alignLeft($token.kind, 12)
+  case token.kind
+  of tokInt: result.add($token.intVal)
+  of tokFloat: result.add($token.floatVal)
+  of tokOperator: result.add(token.operator & " (prec: " & $token.prec & ")")
+  of tokString: result.add(escape(token.stringVal))
+  of tokIdent: result.add(token.ident)
+  else: discard
+
+const OperatorChars = {
+  '=', '+', '-', '*', '/', '<', '>',
+  '$', '&', '%', '!', '^', '.',
+}
+
+const Operators = {
+  "not": 0, "->": 0, "$": 0,
+
+  "=": 1,
+  "or": 2, "xor": 2,
+  "and": 3,
+  "==": 4, "<=": 4, "<": 4, ">": 4, ">=": 4, "!=": 4,
+  "in": 4, "notin": 4, "is": 4, "isnot": 4, "of": 4,
+  "..": 5, "..<": 5,
+  "&": 6,
+  "+": 7, "-": 7,
+  "*": 8, "/": 8, "%": 8,
+  "div": 8, "mod": 8, "shl": 8, "shr": 8,
+  "^": 9
+}.toTable()
+
+const Keywords = {
+  "true": tokTrue, "false": tokFalse,
+  "var": tokVar, "let": tokLet,
+  "if": tokIf, "elif": tokElif, "else": tokElse,
+  "while": tokWhile,
+  "for": tokFor,
+  "break": tokBreak, "continue": tokContinue, "return": tokReturn,
+  "yield": tokYield,
+  "object": tokObject,
+  "proc": tokProc, "iterator": tokIterator
+}.toTable()
+
+const Utf8Chars = {'\x80'..'\xff'}
+const IdentStartChars = strutils.IdentStartChars + Utf8Chars
+const IdentChars = strutils.IdentChars + Utf8Chars
+
+proc error*(scan: var Scanner, message: string) =
+  raise (ref HayaParseError)(msg: ErrorFmt % [scan.file, $scan.ln, $scan.col,
+                                              message],
+                            file: scan.file, ln: scan.ln, col: scan.col)
+
+proc atEnd*(scan: Scanner): bool =
+  result = scan.pos >= scan.input.len
+
+proc current(scan: Scanner): char =
+  if scan.pos < scan.input.len: scan.input[scan.pos]
+  else: '\x00'
+
+proc get(scan: Scanner, n = 1): string =
+  result = scan.input[min(scan.pos, scan.input.len)..<
+                      min(scan.pos + n, scan.input.len)]
+
+proc advance(scan: var Scanner) =
+  inc(scan.pos)
+  inc(scan.col)
+  if scan.current == '\n':
+    inc(scan.ln)
+    scan.col = 0
+  elif scan.current == '\r':
+    scan.col = 0
+
+proc linefeed*(scan: var Scanner): bool =
+  while true:
+    case scan.current
+    of '\x00':
+      result = true
+    of Newlines, ';':
+      result = true
+      while scan.current in Newlines + {';'}:
+        scan.advance()
+      continue
+    of Whitespace - Newlines:
+      while scan.current in Whitespace:
+        scan.advance()
+      continue
+    of '/':
+      if scan.get(2) == "//":
+        scan.advance(); scan.advance()
+        while scan.current != '\n':
+          scan.advance()
+        scan.advance()
+        continue
+    else: discard
+    break
+
+proc peekLinefeed*(scan: var Scanner): bool =
+  let
+    pos = scan.pos
+    ln = scan.ln
+    col = scan.col
+  result = scan.linefeed()
+  scan.pos = pos
+  scan.ln = ln
+  scan.col = col
+
+proc skip(scan: var Scanner) =
+  discard scan.linefeed()
+
+proc next*(scan: var Scanner): Token =
+  scan.skip()
+  let
+    ln = scan.ln
+    col = scan.col
+  case scan.current
+  of '\x00': result = Token(kind: tokEnd)
+  of '(': scan.advance(); result = Token(kind: tokLPar)
+  of ')': scan.advance(); result = Token(kind: tokRPar)
+  of '{': scan.advance(); result = Token(kind: tokLBrace)
+  of '}': scan.advance(); result = Token(kind: tokRBrace)
+  of '[': scan.advance(); result = Token(kind: tokLBrk)
+  of ']': scan.advance(); result = Token(kind: tokRBrk)
+  of ',': scan.advance(); result = Token(kind: tokComma)
+  of ':': scan.advance(); result = Token(kind: tokColon)
+  of OperatorChars:
+    var operator = ""
+    while scan.current in OperatorChars:
+      operator.add(scan.current)
+      scan.advance()
+    if operator in Operators:
+      let prec = Operators[operator]
+      result = Token(kind: tokOperator,
+                     operator: operator.move, prec: prec)
+    else:
+      case operator
+      of ".": result = Token(kind: tokDot)
+      else: scan.error(ErrUnknownOperator % operator)
+  of Digits:
+    var
+      number = ""
+      isFloat = false
+    while scan.current in Digits:
+      number.add(scan.current)
+      scan.advance()
+    if scan.current == '.' and scan.get(2) != "..":
+      isFloat = true
+      number.add(scan.current)
+      scan.advance()
+      while scan.current in Digits:
+        number.add(scan.current)
+        scan.advance()
+    if isFloat:
+      result = Token(kind: tokFloat, floatVal: parseFloat(number))
+    else:
+      result = Token(kind: tokInt, intVal: parseInt(number))
+  of '"':
+    scan.advance()
+    var str = ""
+    while scan.current != '"':
+      if scan.current == '\x00':
+        scan.error(ErrUntermStringLit)
+      str.add(scan.current)
+      scan.advance()
+    scan.advance()
+    result = Token(kind: tokString, stringVal: str)
+  of IdentStartChars:
+    var ident = $scan.current
+    scan.advance()
+    while scan.current in IdentChars:
+      ident.add(scan.current)
+      scan.advance()
+    if ident in Keywords:
+      result = Token(kind: Keywords[ident])
+    elif ident in Operators:
+      let prec = Operators[ident]
+      result = Token(kind: tokOperator, operator: ident.move,
+                     prec: prec)
+    else:
+      result = Token(kind: tokIdent, ident: ident.move)
+  of '`':
+    scan.advance()
+    var ident = ""
+    while scan.current != '`':
+      if scan.current == '\x00':
+        scan.error(ErrUntermStroppedIdent)
+      if scan.current != ' ':
+        ident.add(scan.current)
+      scan.advance()
+    scan.advance()
+    result = Token(kind: tokIdent, ident: ident)
+  else: scan.error(ErrUnexpectedChar % $scan.current)
+  result.ln = ln
+  result.col = col
+
+proc peek*(scan: var Scanner): Token =
+  let
+    pos = scan.pos
+    ln = scan.ln
+    col = scan.col
+  result = scan.next()
+  scan.pos = pos
+  scan.ln = ln
+  scan.col = col
+
+proc expect*(scan: var Scanner, kind: TokenKind,
+             customError = ""): Token {.discardable.} =
+  result = scan.next()
+  if result.kind != kind:
+    if customError.len == 0:
+      scan.error(ErrXExpectedGotY % [$kind, $result.kind])
+    else:
+      scan.error(customError)
+
+proc expectOp*(scan: var Scanner, op: string) =
+  let tok = scan.next()
+  if tok.kind != tokOperator or tok.operator != op:
+    scan.error(ErrOpExpectedGotY % [op, $tok.kind])
+
+proc pattern*(scan: var Scanner, patt: openarray[TokenKind]): bool =
+  let
+    pos = scan.pos
+    ln = scan.ln
+    col = scan.col
+  for tk in patt:
+    if scan.next().kind != tk:
+      result = false
+      break
+  scan.pos = pos
+  scan.ln = ln
+  scan.col = col
+  result = true
+
+proc initScanner*(input: string, file = "input"): Scanner =
+  result = Scanner(file: file, input: input,
+                   ln: 1, col: 0)

@@ -15,10 +15,13 @@ Its main goals are:
 
 - **Simplicity.** The core feature set remains small, but powerful enough for
   usage in applications of varying complexities.
+- **Soundness.** Unlike most scripting languages out there, hayago has a static
+  typing system instead of a dynamic one, which makes code more robust and
+  maintainable. It has generics with type inference, minimizing code repetition
+  and making refactoring easy.
 - **Speed.** It's in the name: _fast language_. While its speed doesn't match
-  that of more complex languages with JIT compilers, design choices like a
-  static object layout make hayago faster than a lot of embeddable scripting
-  languages out there.
+  that of more complex languages with JIT compilers, static typing gives hayago
+  a big advantage over other scripting languages.
 - **Easy embedding.** Embedding hayago in your application is as simple as
   listing all the things you need to be available in the VM.
 
@@ -34,14 +37,32 @@ Non-goals:
   certain changes were made to make hayago work better as a scripting language.
 
 ```nim
-proc hello(target) =
+proc hello(target: string) {
   echo("Hello, " & target)
+}
 
 hello("Nim users")
 
-let features = ["simple", "fast", "concurrent", "embeddable"]
-for x in features:
-  echo(x)
+iterator items[T](list: seq[T]) -> T {
+  var len = list.len
+  for i in 0..<len {
+    yield list[i]
+  }
+}
+
+let features = ["simple", "sound", "fast", "concurrent", "embeddable"]
+
+var message = "hayago is a "
+var i = 0
+for x in features.items {
+  message.add(x)
+  if i != features.len - 1 {
+    message.add(", ")
+  }
+  i = i + 1
+}
+message.add(" scripting language")
+echo(message)
 ```
 
 ## Roadmap
@@ -50,14 +71,19 @@ hayago is not finished yet. The following checklist represents the current state
 of affairs when it comes to features:
 
 - hayago 0.1 (currently worked on)
-  - [ ] variables
-  - [ ] control flow (`if`, `while`, `for`)
-  - [ ] objects
-    - [ ] `impl`
-    - [ ] `bycopy`
+  - [x] variables
+  - [x] flow control (`if`, `while`, `for`)
+  - [x] objects
     - [ ] inheritance
-  - [ ] procedures
+    - [ ] non-`ref` and `ref` objects
+  - [x] procedures
     - [ ] closures
+    - [x] UFCS
+  - [x] iterators
+  - [x] generics
+    - generic type inference
+      - [x] in procedure calls
+      - [ ] in object constructors
   - [ ] modules and `import`
   - [ ] embedding
     - [ ] low-level, unsafe functionality
@@ -67,6 +93,12 @@ of affairs when it comes to features:
     - [ ] string manipulation
     - [ ] seq manipulation
     - …
+- hayago 0.2
+  - [ ] coroutines
+  - [ ] error handling with a `try…except…finally`-like system
+- hayago 0.3
+  - [ ] tuples
+  - [ ] multiple `for` loop variables
 
 There is no hard deadline for any of the listed features. This checklist is
 supposed to show how much of the language is complete, but it probably misses
