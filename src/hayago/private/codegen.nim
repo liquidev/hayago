@@ -809,7 +809,7 @@ proc procCall(node: Node, procSym: Sym): Sym {.codegen.} =
 
 proc call(node: Node): Sym {.codegen.} =
   ## Generates code for an nkCall (proc call or object constructor).
-  # TODO: indirect calls, also this proc is just pure TRASH
+  ## TODO: Indirect calls
   case node[0].kind
   of nkIdent:
     # the call is direct or from a variable

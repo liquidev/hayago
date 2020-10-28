@@ -25,17 +25,6 @@ Its main goals are:
 - **Easy embedding.** Embedding hayago in your application is as simple as
   listing all the things you need to be available in the VM.
 
-Non-goals:
-
-- **Compactness.** There already exist languages like Lua and Wren that fit that
-  purpose much better. hayago does not try to be as compact as possible, but
-  also doesn't require the embedding application to use _all_ the modules.
-  It also doesn't try to implement a blazing-fast compiler, and doesn't strive
-  to be usable on embedded systems.
-- **Implementing Nim.** hayago can be thought of as a _companion_ to Nim, rather
-  than Nim as a scripting language. While the syntax tries to remain familiar,
-  certain changes were made to make hayago work better as a scripting language.
-
 ```nim
 proc hello(target: string) {
   echo("Hello, " & target)
